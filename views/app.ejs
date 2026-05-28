@@ -161,7 +161,10 @@
               <button id="example-button" type="button" class="small-button">생성</button>
             </div>
             <div id="example-output" class="mini-list"></div>
-            <h3>단어장</h3>
+            <div class="list-heading">
+              <h3>단어장</h3>
+              <a id="vocabulary-export-link" class="small-button" href="/api/vocabulary.csv" download="japanese-vocabulary.csv">CSV 내보내기</a>
+            </div>
             <div id="vocabulary-list" class="mini-list">
               <% if (dashboard.vocabulary.length === 0) { %>
                 <p class="empty-text">저장된 단어가 없습니다.</p>

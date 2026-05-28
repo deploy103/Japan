@@ -78,6 +78,12 @@ test('server auth and learning API flow works', { timeout: 30000 }, async () => 
     assert.equal(response.status, 401);
     assert.equal((await response.json()).error, '로그인이 필요합니다.');
 
+    response = await fetch(`http://localhost:${port}/api/vocabulary.csv`, {
+      redirect: 'manual'
+    });
+    assert.equal(response.status, 401);
+    assert.equal((await response.json()).error, '로그인이 필요합니다.');
+
     response = await fetch(`http://localhost:${port}/api/analyze`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -186,7 +192,8 @@ test('server auth and learning API flow works', { timeout: 30000 }, async () => 
       body: JSON.stringify({
         term: '図書館',
         reading: 'としょかん',
-        meaning: '도서관'
+        meaning: '도서관',
+        sourceText: '昨日 "図書館", で'
       })
     });
     assert.equal(response.status, 200);
@@ -197,6 +204,16 @@ test('server auth and learning API flow works', { timeout: 30000 }, async () => 
     assert.equal(response.status, 200);
     const dashboard = await response.json();
     assert.equal(dashboard.stats.vocabulary_count, 1);
+
+    response = await fetch(`http://localhost:${port}/api/vocabulary.csv`, {
+      headers: { cookie: cookieHeader(cookies) }
+    });
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get('content-type'), /^text\/csv/);
+    assert.match(response.headers.get('content-disposition'), /attachment; filename="japanese-vocabulary\.csv"/);
+    const csv = await response.text();
+    assert.match(csv, /^"term","reading","meaning","source_text","created_at"\r\n/);
+    assert.match(csv, /"図書館","としょかん","도서관","昨日 ""図書館"", で","[^"]+"\r\n/);
 
     const savedVocabularyId = dashboard.vocabulary.find((item) => item.term === '図書館').id;
     response = await fetch(`http://localhost:${port}/api/vocabulary/${savedVocabularyId}`, {

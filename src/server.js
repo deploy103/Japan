@@ -453,6 +453,29 @@ function normalizeShortText(value, maxLength = 200) {
   return String(value || '').trim().slice(0, maxLength);
 }
 
+function csvCell(value) {
+  let text = String(value ?? '');
+  if (/^[=+\-@\t\r]/.test(text)) {
+    text = `'${text}`;
+  }
+  return `"${text.replaceAll('"', '""')}"`;
+}
+
+function buildVocabularyCsv(userId) {
+  const rows = db.prepare(`
+    SELECT term, reading, meaning, source_text, created_at
+    FROM vocabulary
+    WHERE user_id = ?
+    ORDER BY created_at DESC, id DESC
+  `).all(userId);
+  const header = ['term', 'reading', 'meaning', 'source_text', 'created_at'];
+  const lines = [
+    header.map(csvCell).join(','),
+    ...rows.map((row) => header.map((field) => csvCell(row[field])).join(','))
+  ];
+  return `${lines.join('\r\n')}\r\n`;
+}
+
 app.use(loadSession);
 app.use(ensureGuestCsrf);
 app.use(originGuard);
@@ -647,6 +670,13 @@ app.get('/api/kanji/:char', requireAuth, (req, res) => {
 
 app.get('/api/dashboard', requireAuth, (req, res) => {
   res.json(getDashboardData(req.user.id));
+});
+
+app.get('/api/vocabulary.csv', requireAuth, (req, res) => {
+  res
+    .type('text/csv; charset=utf-8')
+    .attachment('japanese-vocabulary.csv')
+    .send(`\uFEFF${buildVocabularyCsv(req.user.id)}`);
 });
 
 app.delete('/api/history/:id', requireAuth, (req, res) => {
