@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <%- include('partials/head') %>
+</head>
+<body>
+  <%- include('partials/nav') %>
+  <main class="workspace">
+    <section class="error-panel">
+      <p class="eyebrow">오류</p>
+      <h1><%= title %></h1>
+      <p><%= message %></p>
+      <a class="primary-button inline-button" href="<%= currentUser ? '/app' : '/login' %>">돌아가기</a>
+    </section>
+  </main>
+</body>
+</html>

@@ -1,0 +1,31 @@
+{
+  "name": "japanese-learning-assistant",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Login-protected Japanese sentence analysis learning assistant.",
+  "main": "src/server.js",
+  "scripts": {
+    "dev": "NODE_ENV=development node --watch src/server.js",
+    "start": "NODE_ENV=production node src/server.js",
+    "seed:admin": "node scripts/ensure-admin.js",
+    "backup:db": "node scripts/backup-db.js",
+    "check": "node --check src/server.js && node --check src/config.js && node --check src/db.js && node --check src/security.js && node --check src/services/japanese.js && node --check src/services/koDictionary.js && node --check public/app.js && node --check scripts/ensure-admin.js && node --check scripts/backup-db.js",
+    "audit:security": "npm audit --audit-level=moderate",
+    "audit:signatures": "npm audit signatures",
+    "test": "OPENAI_API_KEY= node --test"
+  },
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "dependencies": {
+    "cookie-parser": "^1.4.7",
+    "dotenv": "^16.4.7",
+    "ejs": "^3.1.10",
+    "express": "^4.21.2",
+    "express-rate-limit": "^7.5.0",
+    "helmet": "^8.0.0",
+    "kanji-data": "^1.1.0",
+    "kuromoji": "^0.1.2",
+    "wanakana": "^5.3.1"
+  }
+}

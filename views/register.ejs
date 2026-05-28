@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <%- include('partials/head') %>
+</head>
+<body class="auth-body">
+  <%- include('partials/nav') %>
+  <main class="auth-shell">
+    <section class="auth-panel" aria-labelledby="register-title">
+      <div class="auth-copy">
+        <p class="eyebrow">회원가입</p>
+        <h1 id="register-title">필수 정보만 입력</h1>
+        <p>첫 번째로 가입하는 계정은 자동으로 관리자 권한을 받습니다.</p>
+      </div>
+      <form class="auth-form" action="/register" method="post" autocomplete="on">
+        <%- include('partials/flash') %>
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <label for="username">아이디</label>
+        <input id="username" name="username" value="<%= values.username || '' %>" autocomplete="username" required minlength="3" maxlength="32" pattern="[a-zA-Z0-9._-]+">
+        <p class="field-help">영문, 숫자, 점, 밑줄, 하이픈 3~32자</p>
+
+        <label for="recovery_email">복구용 이메일</label>
+        <input id="recovery_email" name="recovery_email" type="email" value="<%= values.recovery_email || '' %>" autocomplete="email" required maxlength="254">
+
+        <label for="password">비밀번호</label>
+        <input id="password" name="password" type="password" autocomplete="new-password" required minlength="10" maxlength="128">
+        <p class="field-help">10~128자, 서로 다른 문자 종류 2가지 이상</p>
+
+        <label for="password_confirm">비밀번호 확인</label>
+        <input id="password_confirm" name="password_confirm" type="password" autocomplete="new-password" required minlength="10" maxlength="128">
+
+        <button type="submit" class="primary-button full-width">가입하기</button>
+        <p class="form-alt">이미 계정이 있으면 <a href="/login">로그인</a></p>
+      </form>
+    </section>
+  </main>
+</body>
+</html>
