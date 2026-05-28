@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <%- include('partials/head') %>
+</head>
+<body>
+  <%- include('partials/nav') %>
+  <main class="workspace">
+    <section class="admin-shell" aria-labelledby="admin-title">
+      <div class="workspace-heading">
+        <div>
+          <p class="eyebrow">회원 관리</p>
+          <h1 id="admin-title">관리자 페이지</h1>
+        </div>
+        <div class="session-badge">총 <%= users.length %>명</div>
+      </div>
+
+      <div class="admin-table-wrap">
+        <table class="admin-table">
+          <thead>
+            <tr>
+              <th>아이디</th>
+              <th>복구 이메일</th>
+              <th>권한</th>
+              <th>상태</th>
+              <th>활성 세션</th>
+              <th>최근 로그인</th>
+              <th>관리</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% users.forEach((user) => { %>
+              <tr>
+                <td><strong><%= user.username %></strong></td>
+                <td><%= user.recovery_email %></td>
+                <td><span class="role-pill <%= user.role === 'admin' ? 'role-admin' : '' %>"><%= user.role %></span></td>
+                <td><span class="status-pill <%= user.is_active ? 'status-active' : 'status-disabled' %>"><%= user.is_active ? '활성' : '비활성' %></span></td>
+                <td><%= user.active_sessions %></td>
+                <td><%= user.last_login_at ? new Date(user.last_login_at).toLocaleString('ko-KR') : '-' %></td>
+                <td>
+                  <% if (user.id === currentUser.id) { %>
+                    <span class="muted">본인</span>
+                  <% } else { %>
+                    <div class="admin-actions">
+                      <form action="/admin/users/<%= user.id %>/status" method="post">
+                        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                        <button class="small-button" type="submit"><%= user.is_active ? '비활성화' : '활성화' %></button>
+                      </form>
+                      <form action="/admin/users/<%= user.id %>/role" method="post">
+                        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                        <button class="small-button" type="submit"><%= user.role === 'admin' ? '일반 권한' : '관리자 권한' %></button>
+                      </form>
+                    </div>
+                  <% } %>
+                </td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

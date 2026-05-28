@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <%- include('partials/head') %>
+</head>
+<body class="auth-body">
+  <%- include('partials/nav') %>
+  <main class="auth-shell">
+    <section class="auth-panel" aria-labelledby="login-title">
+      <div class="auth-copy">
+        <p class="eyebrow">보안 로그인</p>
+        <h1 id="login-title">학습 도구에 로그인</h1>
+        <p>문장 분석, 한자 상세 정보, 후리가나와 단어 분리는 로그인 후 이용할 수 있습니다.</p>
+      </div>
+      <form class="auth-form" action="/login" method="post" autocomplete="on">
+        <%- include('partials/flash') %>
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <label for="username">아이디</label>
+        <input id="username" name="username" value="<%= values.username || '' %>" autocomplete="username" required minlength="3" maxlength="32" pattern="[a-zA-Z0-9._-]+">
+
+        <label for="password">비밀번호</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required minlength="10" maxlength="128">
+
+        <button type="submit" class="primary-button full-width">로그인</button>
+        <p class="form-alt">계정이 없으면 <a href="/register">회원가입</a></p>
+      </form>
+    </section>
+  </main>
+</body>
+</html>

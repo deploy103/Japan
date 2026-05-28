@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <%- include('partials/head') %>
+  <script src="/assets/app.js" defer></script>
+</head>
+<body>
+  <%- include('partials/nav') %>
+  <main class="workspace">
+    <section class="translator-shell" aria-labelledby="page-title">
+      <div class="workspace-heading">
+        <div>
+          <p class="eyebrow">1순위 기능</p>
+          <h1 id="page-title">일본어 문장 분석</h1>
+        </div>
+        <div class="heading-actions">
+          <button id="dark-mode-button" type="button" class="ghost-button">다크모드</button>
+          <div class="session-badge"><%= currentUser.username %></div>
+        </div>
+      </div>
+
+      <section class="translator-grid">
+        <form id="analysis-form" class="text-panel input-panel">
+          <div class="panel-toolbar">
+            <div>
+              <span class="panel-label">일본어 원문</span>
+              <span id="char-count" class="muted">0 / 3000</span>
+            </div>
+            <button type="button" id="clear-button" class="ghost-button">지우기</button>
+          </div>
+          <textarea id="source-text" name="text" maxlength="3000" spellcheck="false" required><%= sampleText %></textarea>
+          <div class="panel-actions">
+            <button type="button" id="voice-button" class="ghost-button">음성 입력</button>
+            <button type="button" id="speak-button" class="ghost-button">음성 출력</button>
+            <button type="submit" class="primary-button">분석하기</button>
+          </div>
+        </form>
+
+        <section class="text-panel output-panel" aria-live="polite">
+          <div class="panel-toolbar">
+            <span class="panel-label">한국어 번역</span>
+            <span id="provider-note" class="muted">대기 중</span>
+          </div>
+          <div id="translation-output" class="translation-output placeholder">분석 결과가 여기에 표시됩니다.</div>
+          <div class="furigana-box">
+            <span class="panel-label">후리가나</span>
+            <div id="furigana-output" class="furigana-output"></div>
+          </div>
+        </section>
+      </section>
+
+      <section class="analysis-grid">
+        <section class="analysis-section" aria-labelledby="word-title">
+          <div class="section-heading">
+            <h2 id="word-title">단어 분리 · 품사</h2>
+          </div>
+          <div class="table-wrap">
+            <table class="word-table">
+              <thead>
+                <tr>
+                  <th>단어</th>
+                  <th>읽기</th>
+                  <th>뜻</th>
+                  <th>JLPT</th>
+                  <th>품사</th>
+                  <th>기본형</th>
+                  <th>저장</th>
+                </tr>
+              </thead>
+              <tbody id="word-output">
+                <tr><td colspan="7" class="empty-cell">아직 분석된 단어가 없습니다.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="analysis-section" aria-labelledby="kanji-title">
+          <div class="section-heading">
+            <h2 id="kanji-title">한자 자동 추출</h2>
+          </div>
+          <div id="kanji-list" class="kanji-list">
+            <span class="empty-chip">한자가 추출되면 여기에 표시됩니다.</span>
+          </div>
+          <div id="kanji-detail" class="kanji-detail">
+            <p class="empty-text">한자를 선택하면 뜻, 음독, 훈독, 예시 단어를 볼 수 있습니다.</p>
+          </div>
+        </section>
+      </section>
+
+      <section class="feature-grid">
+        <section class="analysis-section" aria-labelledby="input-tools-title">
+          <div class="section-heading">
+            <h2 id="input-tools-title">입력 도구</h2>
+          </div>
+          <div class="tool-body">
+            <div class="tool-row">
+              <label class="file-button">
+                이미지 OCR
+                <input id="ocr-file" type="file" accept="image/png,image/jpeg,image/webp">
+              </label>
+              <label class="file-button">
+                카메라 촬영
+                <input id="camera-file" type="file" accept="image/*" capture="environment">
+              </label>
+            </div>
+            <p id="ocr-status" class="muted">이미지 속 일본어 문자를 추출해 분석할 수 있습니다.</p>
+            <div class="kana-converter">
+              <input id="kana-input" placeholder="ひらがな 또는 カタカナ">
+              <button id="kana-button" type="button" class="small-button">변환</button>
+            </div>
+            <div id="kana-output" class="mini-result"></div>
+            <div class="kana-converter">
+              <input id="kanji-search-input" maxlength="2" placeholder="한자 상세 검색">
+              <button id="kanji-search-button" type="button" class="small-button">검색</button>
+            </div>
+            <div class="ko-ja-tool">
+              <textarea id="ko-ja-input" maxlength="3000" placeholder="한국어 문장을 일본어로 번역"></textarea>
+              <div class="tool-row">
+                <button id="ko-ja-button" type="button" class="small-button">일본어로 번역</button>
+                <button id="ko-ja-use-button" type="button" class="small-button">분석창에 넣기</button>
+              </div>
+              <div id="ko-ja-output" class="mini-result placeholder">한국어 → 일본어 번역 결과가 여기에 표시됩니다.</div>
+            </div>
+          </div>
+        </section>
+
+        <section class="analysis-section" aria-labelledby="grammar-title">
+          <div class="section-heading">
+            <h2 id="grammar-title">문법 · 난이도</h2>
+          </div>
+          <div class="tool-body">
+            <div id="difficulty-output" class="stat-row"></div>
+            <div id="structure-output" class="mini-result"></div>
+            <div id="particle-output" class="chip-list">
+              <span class="empty-chip">조사 설명이 여기에 표시됩니다.</span>
+            </div>
+            <div id="katakana-output" class="mini-list"></div>
+          </div>
+        </section>
+      </section>
+
+      <section class="feature-grid">
+        <section class="analysis-section" aria-labelledby="saved-title">
+          <div class="section-heading">
+            <h2 id="saved-title">학습 관리</h2>
+          </div>
+          <div class="tool-body">
+            <div class="stat-row" id="stats-output">
+              <span>오늘 분석 <strong><%= dashboard.stats.today_history %></strong></span>
+              <span>단어장 <strong><%= dashboard.stats.vocabulary_count %></strong></span>
+              <span>퀴즈 정답률 <strong><%= dashboard.stats.quiz_accuracy %>%</strong></span>
+            </div>
+            <div class="tool-row">
+              <button id="favorite-sentence-button" type="button" class="small-button">현재 문장 즐겨찾기</button>
+              <button id="quiz-start-button" type="button" class="small-button">복습 퀴즈</button>
+            </div>
+            <div id="quiz-box" class="quiz-box"></div>
+            <h3>예문 생성</h3>
+            <div class="kana-converter">
+              <input id="example-term" placeholder="예문을 만들 단어">
+              <button id="example-button" type="button" class="small-button">생성</button>
+            </div>
+            <div id="example-output" class="mini-list"></div>
+            <h3>단어장</h3>
+            <div id="vocabulary-list" class="mini-list">
+              <% if (dashboard.vocabulary.length === 0) { %>
+                <p class="empty-text">저장된 단어가 없습니다.</p>
+              <% } else { %>
+                <% dashboard.vocabulary.slice(0, 12).forEach((item) => { %>
+                  <div class="mini-item"><strong><%= item.term %></strong><span><%= item.reading || '-' %></span><small><%= item.meaning || '-' %></small></div>
+                <% }) %>
+              <% } %>
+            </div>
+            <h3>즐겨찾기</h3>
+            <div id="favorite-list" class="mini-list">
+              <% if (dashboard.favorites.length === 0) { %>
+                <p class="empty-text">즐겨찾기가 없습니다.</p>
+              <% } else { %>
+                <% dashboard.favorites.slice(0, 8).forEach((item) => { %>
+                  <div class="mini-item"><strong><%= item.item_text %></strong><span><%= ({ word: '단어', kanji: '한자', sentence: '문장' })[item.item_type] || item.item_type %></span><small><%= item.note || '' %></small></div>
+                <% }) %>
+              <% } %>
+            </div>
+          </div>
+        </section>
+
+        <section class="analysis-section" aria-labelledby="history-title">
+          <div class="section-heading">
+            <h2 id="history-title">기록 · 오답</h2>
+          </div>
+          <div class="tool-body">
+            <h3>최근 검색 기록</h3>
+            <div id="history-list" class="mini-list">
+              <% if (dashboard.history.length === 0) { %>
+                <p class="empty-text">아직 검색 기록이 없습니다.</p>
+              <% } else { %>
+                <% dashboard.history.slice(0, 8).forEach((item) => { %>
+                  <button class="history-item" type="button" data-text="<%= item.source_text %>"><strong><%= item.source_text %></strong><span><%= item.translation_text || '' %></span></button>
+                <% }) %>
+              <% } %>
+            </div>
+            <h3>오답노트</h3>
+            <div id="wrong-note-list" class="mini-list">
+              <% if (dashboard.wrongNotes.length === 0) { %>
+                <p class="empty-text">아직 오답이 없습니다.</p>
+              <% } else { %>
+                <% dashboard.wrongNotes.slice(0, 8).forEach((item) => { %>
+                  <div class="mini-item"><strong><%= item.term %></strong><span>입력: <%= item.submitted_answer || '-' %></span></div>
+                <% }) %>
+              <% } %>
+            </div>
+          </div>
+        </section>
+      </section>
+    </section>
+  </main>
+</body>
+</html>
