@@ -19,7 +19,7 @@ const {
 } = require('./security');
 const {
   analyzeJapanese,
-  getKanjiDetail,
+  getKanjiDetailWithAi,
   translateKoreanToJapanese,
   convertKana,
   generateExamples,
@@ -663,9 +663,13 @@ app.post('/api/translate-ko-ja', requireAuth, aiCostLimiter, async (req, res, ne
   }
 });
 
-app.get('/api/kanji/:char', requireAuth, (req, res) => {
+app.get('/api/kanji/:char', requireAuth, async (req, res, next) => {
   const char = String(req.params.char || '').charAt(0);
-  res.json(getKanjiDetail(char));
+  try {
+    res.json(await getKanjiDetailWithAi(char));
+  } catch (error) {
+    next(error);
+  }
 });
 
 app.get('/api/dashboard', requireAuth, (req, res) => {
