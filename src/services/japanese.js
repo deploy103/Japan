@@ -11,6 +11,8 @@ const {
 } = require('./koDictionary');
 
 const MAX_TEXT_LENGTH = 3000;
+const NEEDS_MEANING = '뜻 보강 필요';
+const MAX_AI_MEANING_ITEMS = 40;
 let tokenizerPromise;
 
 const POS_KO = {
@@ -124,6 +126,12 @@ function meaningKo(meanings) {
   return translateGlosses(meanings);
 }
 
+function hasUsefulMeanings(meanings) {
+  return Array.isArray(meanings) && meanings.some((meaning) => (
+    typeof meaning === 'string' && meaning.trim() && meaning.trim() !== NEEDS_MEANING
+  ));
+}
+
 function getKanjiDetail(char) {
   const info = kanjiData.get(char);
   if (!info) {
@@ -149,13 +157,13 @@ function getKanjiDetail(char) {
     return {
       written: variant.written || '',
       pronounced: variant.pronounced || '',
-      meanings: meaningsKo.length ? meaningsKo : ['뜻 보강 필요']
+      meanings: meaningsKo.length ? meaningsKo : [NEEDS_MEANING]
     };
   }).filter((word) => word.written);
 
   return {
     char,
-    meanings: meaningsKo.length ? meaningsKo : ['뜻 보강 필요'],
+    meanings: meaningsKo.length ? meaningsKo : [NEEDS_MEANING],
     meaningsKo,
     onReadings: info.on_readings || [],
     kunReadings: info.kun_readings || [],
@@ -231,6 +239,35 @@ function stripWrappingQuotes(text) {
   return String(text || '').trim().replace(/^["'「『]+|["'」』]+$/g, '').trim();
 }
 
+function cleanMeaningList(value, limit = 4) {
+  const raw = Array.isArray(value)
+    ? value
+    : String(value || '').split(/[,;/、\n]/);
+  const meanings = raw
+    .map((item) => String(item || '').replace(/[.。]+$/g, '').trim())
+    .filter((item) => item && item !== NEEDS_MEANING);
+  return Array.from(new Set(meanings)).slice(0, limit);
+}
+
+function parseAiMeaningMap(text) {
+  const parsed = parseJsonArrayText(text);
+  if (!Array.isArray(parsed)) {
+    return new Map();
+  }
+
+  const result = new Map();
+  for (const item of parsed) {
+    if (!item || typeof item.id !== 'string') {
+      continue;
+    }
+    const meanings = cleanMeaningList(item.meanings || item.meaning);
+    if (meanings.length) {
+      result.set(item.id, meanings);
+    }
+  }
+  return result;
+}
+
 // OpenAI 호출은 한 곳으로 모아 timeout, store:false, 키 은닉 처리를 일관되게 유지한다.
 async function callOpenAI({ instructions, input, maxOutputTokens = 900 }) {
   if (!config.openaiApiKey) {
@@ -263,6 +300,171 @@ async function callOpenAI({ instructions, input, maxOutputTokens = 900 }) {
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function tokenMeaningKey(token) {
+  return [token.surface, token.base || '', token.reading || '', token.pos || ''].join('\u0001');
+}
+
+function shouldEnrichTokenMeaning(token) {
+  return !token.meaning
+    && token.surface
+    && token.pos !== '記号'
+    && !/^[。、,.!?！？\s]+$/.test(token.surface);
+}
+
+async function enrichWordMeaningsWithOpenAI(tokens) {
+  if (!config.openaiApiKey) {
+    return tokens;
+  }
+
+  const requests = [];
+  const keyToId = new Map();
+  for (const token of tokens) {
+    if (!shouldEnrichTokenMeaning(token)) {
+      continue;
+    }
+    const key = tokenMeaningKey(token);
+    if (keyToId.has(key)) {
+      continue;
+    }
+    const id = `word-${requests.length}`;
+    keyToId.set(key, id);
+    requests.push({
+      id,
+      surface: token.surface,
+      base: token.base,
+      reading: token.reading,
+      pos: token.posKo || token.pos
+    });
+    if (requests.length >= MAX_AI_MEANING_ITEMS) {
+      break;
+    }
+  }
+
+  if (!requests.length) {
+    return tokens;
+  }
+
+  try {
+    const output = await callOpenAI({
+      instructions: [
+        '입력은 일본어 형태소 JSON 배열이다.',
+        '각 항목의 surface, base, reading, pos를 보고 한국어 학습용 뜻을 보강한다.',
+        '출력은 JSON 배열만 사용한다. 각 항목은 id와 meanings 배열을 가진다.',
+        'meanings는 짧은 한국어 단어 또는 표현 1~3개로 제한한다.',
+        '조사는 뜻 대신 문장 안 역할을 짧게 쓴다. 모르면 빈 배열을 쓴다.'
+      ].join('\n'),
+      input: JSON.stringify(requests),
+      maxOutputTokens: 900
+    });
+    const meaningsById = parseAiMeaningMap(output);
+    if (!meaningsById.size) {
+      return tokens;
+    }
+
+    return tokens.map((token) => {
+      if (!shouldEnrichTokenMeaning(token)) {
+        return token;
+      }
+      const id = keyToId.get(tokenMeaningKey(token));
+      const meanings = id ? meaningsById.get(id) : null;
+      return meanings && meanings.length
+        ? { ...token, meaning: meanings.join(', ') }
+        : token;
+    });
+  } catch (error) {
+    return tokens;
+  }
+}
+
+async function enrichKanjiDetailsWithOpenAI(kanjiDetails) {
+  if (!config.openaiApiKey) {
+    return kanjiDetails;
+  }
+
+  const requests = [];
+  for (const detail of kanjiDetails) {
+    if (!hasUsefulMeanings(detail.meaningsKo) && requests.length < MAX_AI_MEANING_ITEMS) {
+      requests.push({
+        id: `kanji:${detail.char}`,
+        type: 'kanji',
+        char: detail.char,
+        onReadings: detail.onReadings,
+        kunReadings: detail.kunReadings
+      });
+    }
+
+    detail.examples.forEach((example, index) => {
+      if (!hasUsefulMeanings(example.meanings) && requests.length < MAX_AI_MEANING_ITEMS) {
+        requests.push({
+          id: `example:${detail.char}:${index}`,
+          type: 'word',
+          written: example.written,
+          pronounced: example.pronounced
+        });
+      }
+    });
+
+    if (requests.length >= MAX_AI_MEANING_ITEMS) {
+      break;
+    }
+  }
+
+  if (!requests.length) {
+    return kanjiDetails;
+  }
+
+  try {
+    const output = await callOpenAI({
+      instructions: [
+        '입력은 한자와 한자 예시 단어 JSON 배열이다.',
+        '각 항목의 한국어 학습용 뜻을 보강한다.',
+        '출력은 JSON 배열만 사용한다. 각 항목은 id와 meanings 배열을 가진다.',
+        '한자는 대표 뜻 1~4개, 단어는 자연스러운 한국어 뜻 1~3개로 제한한다.',
+        '일본어 설명, 마크다운, 문장 해설은 넣지 않는다. 모르면 빈 배열을 쓴다.'
+      ].join('\n'),
+      input: JSON.stringify(requests),
+      maxOutputTokens: 1200
+    });
+    const meaningsById = parseAiMeaningMap(output);
+    if (!meaningsById.size) {
+      return kanjiDetails;
+    }
+
+    return kanjiDetails.map((detail) => {
+      let next = detail;
+      const kanjiMeanings = meaningsById.get(`kanji:${detail.char}`);
+      if (!hasUsefulMeanings(detail.meaningsKo) && kanjiMeanings?.length) {
+        next = {
+          ...next,
+          meanings: kanjiMeanings,
+          meaningsKo: kanjiMeanings
+        };
+      }
+
+      const examples = detail.examples.map((example, index) => {
+        if (hasUsefulMeanings(example.meanings)) {
+          return example;
+        }
+        const meanings = meaningsById.get(`example:${detail.char}:${index}`);
+        return meanings?.length ? { ...example, meanings } : example;
+      });
+
+      if (examples.some((example, index) => example !== detail.examples[index])) {
+        next = { ...next, examples };
+      }
+
+      return next;
+    });
+  } catch (error) {
+    return kanjiDetails;
+  }
+}
+
+async function getKanjiDetailWithAi(char) {
+  const [detail] = await enrichKanjiDetailsWithOpenAI([getKanjiDetail(char)]);
+  return detail;
 }
 
 async function openAITranslate(text) {
@@ -527,21 +729,28 @@ async function analyzeJapanese(text) {
   }
 
   const tokenizer = await getTokenizer();
-  const tokens = tokenizer.tokenize(input).map(simplifyToken);
+  let tokens = tokenizer.tokenize(input).map(simplifyToken);
   const kanji = extractKanji(input).slice(0, 80);
-  const kanjiDetails = kanji.map(getKanjiDetail);
+  let kanjiDetails = kanji.map(getKanjiDetail);
+
+  const [
+    enrichedTokens,
+    enrichedKanjiDetails,
+    externalTranslation
+  ] = await Promise.all([
+    enrichWordMeaningsWithOpenAI(tokens),
+    enrichKanjiDetailsWithOpenAI(kanjiDetails),
+    externalTranslate(input).catch(() => null)
+  ]);
+  tokens = enrichedTokens;
+  kanjiDetails = enrichedKanjiDetails;
+
   const particles = analyzeParticles(tokens);
   const katakana = extractKatakana(input);
   const structure = analyzeSentenceStructure(tokens);
   const difficulty = estimateDifficulty(input, tokens, kanjiDetails);
 
-  let translation = null;
-  try {
-    translation = await externalTranslate(input);
-  } catch (error) {
-    translation = null;
-  }
-
+  let translation = externalTranslation;
   if (!translation) {
     translation = localTranslate(input, tokens);
   }
@@ -564,6 +773,7 @@ module.exports = {
   analyzeJapanese,
   extractKanji,
   getKanjiDetail,
+  getKanjiDetailWithAi,
   hasKanji,
   localTranslate,
   translateKoreanToJapanese,
