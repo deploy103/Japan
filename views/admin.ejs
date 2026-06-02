@@ -44,6 +44,35 @@
         <table class="admin-table">
           <thead>
             <tr>
+              <th>보안 이벤트</th>
+              <th>아이디</th>
+              <th>IP 해시</th>
+              <th>상세</th>
+              <th>시각</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% if (securityEvents.length === 0) { %>
+              <tr><td colspan="5" class="empty-cell">최근 보안 이벤트가 없습니다.</td></tr>
+            <% } else { %>
+              <% securityEvents.forEach((event) => { %>
+                <tr>
+                  <td><strong><%= event.label %></strong></td>
+                  <td><%= event.username || '-' %></td>
+                  <td><%= event.ip_hash_short || '-' %></td>
+                  <td><%= event.detail || '-' %></td>
+                  <td><%= event.created_at ? new Date(event.created_at).toLocaleString('ko-KR') : '-' %></td>
+                </tr>
+              <% }) %>
+            <% } %>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="admin-table-wrap">
+        <table class="admin-table">
+          <thead>
+            <tr>
               <th>아이디</th>
               <th>복구 이메일</th>
               <th>권한</th>

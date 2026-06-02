@@ -37,6 +37,14 @@ const GUEST_CSRF_COOKIE = 'guest_csrf';
 const SESSION_COOKIE = 'sid';
 const DUMMY_PASSWORD_HASH = 'scrypt$32768$8$1$64$jUnvMa_JD5-6XnyA0QhkAg$EjkhWkS5SibRIKXJox01CpZHY7ZI57OsYbif8npK9vS-BGGXjTVRFDNC8VOoNZDN6L6F-rq4KS6k83SCighDew';
 const INVALID_LOGIN_MESSAGE = '아이디 또는 비밀번호가 올바르지 않습니다.';
+const SECURITY_EVENT_LABELS = {
+  account_created: '계정 생성',
+  login_success: '로그인 성공',
+  login_failed: '로그인 실패',
+  login_inactive: '비활성 계정 접근',
+  logout: '로그아웃',
+  security_blocked: '보안 차단'
+};
 
 const app = express();
 
@@ -154,6 +162,26 @@ function clearSessionCookie(res) {
   });
 }
 
+function logSecurityEvent(req, eventType, { username = '', userId = null, detail = '' } = {}) {
+  try {
+    const ipHash = req.ip ? sha256(`ip:${req.ip}`) : '';
+    db.prepare(`
+      INSERT INTO security_events (event_type, username, user_id, ip_hash, user_agent, detail, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      String(eventType || '').slice(0, 80),
+      normalizeUsername(username).slice(0, 80),
+      userId,
+      ipHash,
+      String(req.get('user-agent') || '').slice(0, 400),
+      String(detail || '').slice(0, 500),
+      nowIso()
+    );
+  } catch (error) {
+    console.warn('security_event_log_failed', { eventType, message: error.message });
+  }
+}
+
 function createSession(res, req, userId) {
   const token = randomToken(48);
   const now = Date.now();
@@ -258,6 +286,11 @@ function isAuthPost(req) {
 }
 
 function securityError(req, res, status, message) {
+  logSecurityEvent(req, 'security_blocked', {
+    username: req.user?.username || '',
+    userId: req.user?.id || null,
+    detail: `${req.method} ${req.path}: ${message}`
+  });
   console.warn('security_blocked', {
     path: req.path,
     method: req.method,
@@ -527,6 +560,18 @@ function buildVocabularyCsv(userId) {
   return `${lines.join('\r\n')}\r\n`;
 }
 
+function pruneSecurityEvents() {
+  db.prepare(`
+    DELETE FROM security_events
+    WHERE id NOT IN (
+      SELECT id
+      FROM security_events
+      ORDER BY created_at DESC, id DESC
+      LIMIT 5000
+    )
+  `).run();
+}
+
 function cacheSummary(tableName, where = '') {
   const row = db.prepare(`
     SELECT
@@ -554,6 +599,19 @@ function getCacheStats() {
   ];
 }
 
+function getSecurityEvents() {
+  return db.prepare(`
+    SELECT event_type, username, ip_hash, detail, created_at
+    FROM security_events
+    ORDER BY created_at DESC, id DESC
+    LIMIT 40
+  `).all().map((event) => ({
+    ...event,
+    label: SECURITY_EVENT_LABELS[event.event_type] || event.event_type,
+    ip_hash_short: event.ip_hash ? event.ip_hash.slice(0, 12) : ''
+  }));
+}
+
 app.use(loadSession);
 app.use(ensureGuestCsrf);
 app.use(originGuard);
@@ -561,8 +619,10 @@ app.use(csrfGuard);
 
 setInterval(pruneExpiredSessions, 1000 * 60 * 30).unref();
 setInterval(pruneLearningCaches, 1000 * 60 * 60 * 6).unref();
+setInterval(pruneSecurityEvents, 1000 * 60 * 60 * 6).unref();
 pruneExpiredSessions();
 pruneLearningCaches();
+pruneSecurityEvents();
 
 app.get('/', (req, res) => {
   res.redirect(req.user ? '/app' : '/login');
@@ -602,6 +662,7 @@ app.post('/login', authLimiter, async (req, res, next) => {
     const passwordMatches = await verifyPassword(password, user ? user.password_hash : DUMMY_PASSWORD_HASH);
 
     if (!user || !passwordMatches) {
+      logSecurityEvent(req, 'login_failed', { username, detail: 'invalid credentials' });
       renderAuth(res.status(401), 'login', {
         title: '로그인',
         error: INVALID_LOGIN_MESSAGE,
@@ -611,6 +672,7 @@ app.post('/login', authLimiter, async (req, res, next) => {
     }
 
     if (user.is_active !== 1) {
+      logSecurityEvent(req, 'login_inactive', { username, userId: user.id, detail: 'inactive account' });
       renderAuth(res.status(403), 'login', {
         title: '로그인',
         error: '비활성화된 계정입니다. 관리자에게 문의해 주세요.',
@@ -623,6 +685,7 @@ app.post('/login', authLimiter, async (req, res, next) => {
     db.prepare('DELETE FROM sessions WHERE user_id = ? AND expires_at <= ?').run(user.id, Date.now());
     createSession(res, req, user.id);
     db.prepare('UPDATE users SET last_login_at = ?, updated_at = ? WHERE id = ?').run(nowIso(), nowIso(), user.id);
+    logSecurityEvent(req, 'login_success', { username, userId: user.id });
     res.redirect('/app');
   } catch (error) {
     next(error);
@@ -670,10 +733,12 @@ app.post('/register', authLimiter, async (req, res, next) => {
 
     const passwordHash = await hashPassword(password);
     let result;
+    let createdRole = 'user';
     db.exec('BEGIN IMMEDIATE');
     try {
       const count = db.prepare('SELECT COUNT(*) AS count FROM users').get().count;
       const role = count === 0 ? 'admin' : 'user';
+      createdRole = role;
       result = db.prepare(`
         INSERT INTO users (username, password_hash, recovery_email, role, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?)
@@ -686,6 +751,11 @@ app.post('/register', authLimiter, async (req, res, next) => {
 
     destroySession(req, res);
     createSession(res, req, Number(result.lastInsertRowid));
+    logSecurityEvent(req, 'account_created', {
+      username,
+      userId: Number(result.lastInsertRowid),
+      detail: createdRole
+    });
     res.redirect('/app');
   } catch (error) {
     next(error);
@@ -693,6 +763,7 @@ app.post('/register', authLimiter, async (req, res, next) => {
 });
 
 app.post('/logout', requireAuth, (req, res) => {
+  logSecurityEvent(req, 'logout', { username: req.user.username, userId: req.user.id });
   destroySession(req, res);
   res.redirect('/login');
 });
@@ -917,7 +988,8 @@ app.get('/admin', requireAdmin, (req, res) => {
   res.render('admin', {
     title: '관리자',
     users,
-    cacheStats: getCacheStats()
+    cacheStats: getCacheStats(),
+    securityEvents: getSecurityEvents()
   });
 });
 

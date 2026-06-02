@@ -147,6 +147,15 @@ test('server auth and learning API flow works', { timeout: 30000 }, async () => 
     const csrf = extractCsrf(appHtml);
     assert.ok(csrf);
 
+    response = await fetch(`http://localhost:${port}/admin`, {
+      headers: { cookie: cookieHeader(cookies) }
+    });
+    assert.equal(response.status, 200);
+    const adminHtml = await response.text();
+    assert.match(adminHtml, /보안 이벤트/);
+    assert.match(adminHtml, /로그인 실패/);
+    assert.match(adminHtml, /계정 생성/);
+
     response = await fetch(`http://localhost:${port}/api/analyze`, {
       method: 'POST',
       headers: {
