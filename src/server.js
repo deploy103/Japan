@@ -25,7 +25,11 @@ const {
   generateExamples,
   ocrImage
 } = require('./services/japanese');
-const { saveWordMeaning } = require('./services/learningCache');
+const {
+  getCachedAnalysis,
+  getCachedTranslation,
+  saveWordMeaning
+} = require('./services/learningCache');
 
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7;
 const GUEST_CSRF_COOKIE = 'guest_csrf';
@@ -392,6 +396,49 @@ function summarizeAnalysis(result) {
   });
 }
 
+function saveAnalysisHistory(userId, result) {
+  db.prepare(`
+    INSERT INTO search_history (user_id, source_text, translation_text, summary_json, created_at)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(userId, result.source, result.translation.text, summarizeAnalysis(result), nowIso());
+}
+
+function saveKoJaHistory(userId, result) {
+  db.prepare(`
+    INSERT INTO search_history (user_id, source_text, translation_text, summary_json, created_at)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(userId, result.source, result.translation.text, JSON.stringify({ direction: 'ko-ja' }), nowIso());
+}
+
+function serveCachedAnalysis(req, res, next) {
+  const cached = getCachedAnalysis(req.body?.text);
+  if (!cached) {
+    next();
+    return;
+  }
+  if (req.body?.saveHistory !== false) {
+    saveAnalysisHistory(req.user.id, cached);
+  }
+  res.json(cached);
+}
+
+function serveCachedKoJaTranslation(req, res, next) {
+  const input = String(req.body?.text || '').trim();
+  const cached = getCachedTranslation('ko-ja', input);
+  if (!cached) {
+    next();
+    return;
+  }
+  const result = {
+    source: input,
+    translation: cached
+  };
+  if (req.body?.saveHistory === true) {
+    saveKoJaHistory(req.user.id, result);
+  }
+  res.json(result);
+}
+
 // 앱 첫 화면에서 필요한 기록/단어장/오답 데이터를 한 번에 묶어 내려준다.
 function getDashboardData(userId) {
   const history = db.prepare(`
@@ -653,14 +700,11 @@ app.get('/app', requireAuth, (req, res) => {
   });
 });
 
-app.post('/api/analyze', requireAuth, aiCostLimiter, async (req, res, next) => {
+app.post('/api/analyze', requireAuth, serveCachedAnalysis, aiCostLimiter, async (req, res, next) => {
   try {
     const result = await analyzeJapanese(req.body.text);
     if (req.body.saveHistory !== false) {
-      db.prepare(`
-        INSERT INTO search_history (user_id, source_text, translation_text, summary_json, created_at)
-        VALUES (?, ?, ?, ?, ?)
-      `).run(req.user.id, result.source, result.translation.text, summarizeAnalysis(result), nowIso());
+      saveAnalysisHistory(req.user.id, result);
     }
     res.json(result);
   } catch (error) {
@@ -672,14 +716,11 @@ app.post('/api/analyze', requireAuth, aiCostLimiter, async (req, res, next) => {
   }
 });
 
-app.post('/api/translate-ko-ja', requireAuth, aiCostLimiter, async (req, res, next) => {
+app.post('/api/translate-ko-ja', requireAuth, serveCachedKoJaTranslation, aiCostLimiter, async (req, res, next) => {
   try {
     const result = await translateKoreanToJapanese(req.body.text);
     if (req.body.saveHistory === true) {
-      db.prepare(`
-        INSERT INTO search_history (user_id, source_text, translation_text, summary_json, created_at)
-        VALUES (?, ?, ?, ?, ?)
-      `).run(req.user.id, result.source, result.translation.text, JSON.stringify({ direction: 'ko-ja' }), nowIso());
+      saveKoJaHistory(req.user.id, result);
     }
     res.json(result);
   } catch (error) {
