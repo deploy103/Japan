@@ -60,6 +60,15 @@ test('Korean to Japanese translation has local fallback without OpenAI', async (
   assert.equal(result.translation.provider, 'local-exact');
 });
 
+test('concurrent Korean to Japanese translation shares one in-flight result', async () => {
+  const [first, second] = await Promise.all([
+    translateKoreanToJapanese('새로운 문장을 번역합니다.'),
+    translateKoreanToJapanese('새로운 문장을 번역합니다.')
+  ]);
+  assert.equal(first.translation.provider, 'local-unavailable');
+  assert.deepEqual(second, first);
+});
+
 test('analysis reuses cached translation and meanings before OpenAI', async () => {
   saveTranslationCache('ja-ko', '橋を渡る。', {
     text: '다리를 건넙니다.',

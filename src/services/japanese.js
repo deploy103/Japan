@@ -29,6 +29,7 @@ const MAX_AI_MEANING_ITEMS = 40;
 let tokenizerPromise;
 const analysisInFlight = new Map();
 const exampleInFlight = new Map();
+const koJaTranslationInFlight = new Map();
 
 const POS_KO = {
   名詞: '명사',
@@ -667,6 +668,21 @@ async function translateKoreanToJapanese(text) {
     };
   }
 
+  const requestKey = analysisRequestKey(input);
+  const activeRequest = koJaTranslationInFlight.get(requestKey);
+  if (activeRequest) {
+    return activeRequest;
+  }
+
+  const request = translateKoreanToJapaneseFresh(input)
+    .finally(() => {
+      koJaTranslationInFlight.delete(requestKey);
+    });
+  koJaTranslationInFlight.set(requestKey, request);
+  return request;
+}
+
+async function translateKoreanToJapaneseFresh(input) {
   const translated = await callOpenAI({
     instructions: [
       '너는 한국어를 자연스러운 일본어로 번역하는 학습 보조 엔진이다.',
