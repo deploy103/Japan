@@ -522,38 +522,38 @@ function serveCachedExamples(req, res, next) {
 }
 
 // 앱 첫 화면에서 필요한 기록/단어장/오답 데이터를 한 번에 묶어 내려준다.
-function getDashboardData(userId) {
+function getDashboardData(userId, { historyLimit = 200, vocabularyLimit = 500, favoriteLimit = 200, wrongLimit = 200 } = {}) {
   const history = db.prepare(`
     SELECT id, source_text, translation_text, created_at
     FROM search_history
     WHERE user_id = ?
     ORDER BY created_at DESC
-    LIMIT 12
-  `).all(userId);
+    LIMIT ?
+  `).all(userId, historyLimit);
 
   const vocabulary = db.prepare(`
     SELECT id, term, reading, meaning, source_text, created_at
     FROM vocabulary
     WHERE user_id = ?
     ORDER BY created_at DESC
-    LIMIT 100
-  `).all(userId);
+    LIMIT ?
+  `).all(userId, vocabularyLimit);
 
   const favorites = db.prepare(`
     SELECT id, item_type, item_text, note, created_at
     FROM favorites
     WHERE user_id = ?
     ORDER BY created_at DESC
-    LIMIT 50
-  `).all(userId);
+    LIMIT ?
+  `).all(userId, favoriteLimit);
 
   const wrongNotes = db.prepare(`
     SELECT id, term, correct_answer, submitted_answer, created_at
     FROM wrong_notes
     WHERE user_id = ?
     ORDER BY created_at DESC
-    LIMIT 50
-  `).all(userId);
+    LIMIT ?
+  `).all(userId, wrongLimit);
 
   const stats = db.prepare(`
     SELECT
@@ -850,10 +850,23 @@ app.post('/logout', requireAuth, (req, res) => {
 });
 
 app.get('/app', requireAuth, (req, res) => {
+  const requestedText = normalizeShortText(req.query.text, 3000);
   res.render('app', {
     title: '문장 분석',
-    sampleText: '私は昨日、図書館で日本語の本を読みました。',
+    sampleText: requestedText || '私は昨日、図書館で日本語の本を読みました。'
+  });
+});
+
+app.get('/study', requireAuth, (req, res) => {
+  res.render('study', {
+    title: '학습 관리',
     dashboard: getDashboardData(req.user.id)
+  });
+});
+
+app.get('/word-test', requireAuth, (req, res) => {
+  res.render('word-test', {
+    title: '단어 테스트'
   });
 });
 
@@ -1049,6 +1062,49 @@ app.post('/api/quiz', requireAuth, (req, res) => {
     ok: true,
     isCorrect,
     correctAnswer: item.term
+  });
+});
+
+app.post('/api/word-test/attempt', requireAuth, (req, res) => {
+  const vocabularyId = Number(req.body.vocabularyId);
+  const mode = normalizeShortText(req.body.mode, 20);
+  const submittedAnswer = normalizeShortText(req.body.answer, 120);
+  const item = db.prepare('SELECT id, term, reading, meaning FROM vocabulary WHERE id = ? AND user_id = ?').get(vocabularyId, req.user.id);
+  if (!item || !['term', 'meaning'].includes(mode) || !submittedAnswer) {
+    res.status(400).json({ error: '테스트 답안을 확인해 주세요.' });
+    return;
+  }
+
+  const normalizeAnswer = (value) => String(value || '').trim().toLowerCase();
+  const submitted = normalizeAnswer(submittedAnswer);
+  const expectedValues = mode === 'term'
+    ? [item.term]
+    : String(item.meaning || '')
+      .split(/[,;/、]/)
+      .map((value) => value.trim())
+      .filter(Boolean);
+  const expectedAnswer = expectedValues[0] || item.meaning || item.term;
+  const isCorrect = expectedValues.some((value) => normalizeAnswer(value) === submitted);
+  const prompt = mode === 'term'
+    ? `뜻이 "${item.meaning || item.reading || '-'}"인 일본어 단어는?`
+    : `${item.term}${item.reading ? ` (${item.reading})` : ''}의 뜻은?`;
+
+  db.prepare(`
+    INSERT INTO quiz_attempts (user_id, vocabulary_id, prompt, expected_answer, submitted_answer, is_correct, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(req.user.id, item.id, prompt, expectedAnswer, submittedAnswer, isCorrect ? 1 : 0, nowIso());
+
+  if (!isCorrect) {
+    db.prepare(`
+      INSERT INTO wrong_notes (user_id, term, correct_answer, submitted_answer, created_at)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(req.user.id, item.term, expectedAnswer, submittedAnswer, nowIso());
+  }
+
+  res.json({
+    ok: true,
+    isCorrect,
+    correctAnswer: expectedAnswer
   });
 });
 

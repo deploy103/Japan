@@ -147,6 +147,8 @@ test('server auth and learning API flow works', { timeout: 30000 }, async () => 
     const appHtml = await response.text();
     const csrf = extractCsrf(appHtml);
     assert.ok(csrf);
+    assert.match(appHtml, /학습 관리/);
+    assert.match(appHtml, /단어 테스트/);
     const testDb = new DatabaseSync(databasePath);
     const sessionRows = testDb.prepare('SELECT ip_address FROM sessions').all();
     testDb.close();
@@ -161,6 +163,21 @@ test('server auth and learning API flow works', { timeout: 30000 }, async () => 
     assert.match(adminHtml, /AI 사용량/);
     assert.match(adminHtml, /로그인 실패/);
     assert.match(adminHtml, /계정 생성/);
+
+    response = await fetch(`http://localhost:${port}/study`, {
+      headers: { cookie: cookieHeader(cookies) }
+    });
+    assert.equal(response.status, 200);
+    const studyHtml = await response.text();
+    assert.match(studyHtml, /단어장 · 기록 · 오답/);
+    assert.match(studyHtml, /1 \/ 1/);
+
+    response = await fetch(`http://localhost:${port}/word-test`, {
+      headers: { cookie: cookieHeader(cookies) }
+    });
+    assert.equal(response.status, 200);
+    const wordTestHtml = await response.text();
+    assert.match(wordTestHtml, /저장 단어 복습/);
 
     response = await fetch(`http://localhost:${port}/api/analyze`, {
       method: 'POST',
@@ -268,6 +285,25 @@ test('server auth and learning API flow works', { timeout: 30000 }, async () => 
     const dashboard = await response.json();
     assert.equal(dashboard.stats.vocabulary_count, 1);
 
+    const savedVocabularyId = dashboard.vocabulary.find((item) => item.term === '図書館').id;
+    response = await fetch(`http://localhost:${port}/api/word-test/attempt`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-csrf-token': csrf,
+        cookie: cookieHeader(cookies),
+        origin: `http://localhost:${port}`
+      },
+      body: JSON.stringify({
+        vocabularyId: savedVocabularyId,
+        mode: 'term',
+        answer: '図書館'
+      })
+    });
+    assert.equal(response.status, 200);
+    const wordTestAttempt = await response.json();
+    assert.equal(wordTestAttempt.isCorrect, true);
+
     response = await fetch(`http://localhost:${port}/api/vocabulary.csv`, {
       headers: { cookie: cookieHeader(cookies) }
     });
@@ -278,7 +314,6 @@ test('server auth and learning API flow works', { timeout: 30000 }, async () => 
     assert.match(csv, /^"term","reading","meaning","source_text","created_at"\r\n/);
     assert.match(csv, /"図書館","としょかん","도서관","昨日 ""図書館"", で","[^"]+"\r\n/);
 
-    const savedVocabularyId = dashboard.vocabulary.find((item) => item.term === '図書館').id;
     response = await fetch(`http://localhost:${port}/api/vocabulary/${savedVocabularyId}`, {
       method: 'DELETE',
       headers: {

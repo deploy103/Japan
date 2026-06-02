@@ -6,6 +6,8 @@
   <% if (currentUser) { %>
     <nav class="nav-links" aria-label="주요 메뉴">
       <a class="<%= path === '/app' ? 'active' : '' %>" href="/app">분석</a>
+      <a class="<%= path === '/study' ? 'active' : '' %>" href="/study">학습</a>
+      <a class="<%= path === '/word-test' ? 'active' : '' %>" href="/word-test">단어 테스트</a>
       <% if (currentUser.role === 'admin') { %>
         <a class="<%= path === '/admin' ? 'active' : '' %>" href="/admin">관리자</a>
       <% } %>

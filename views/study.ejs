@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <%- include('partials/head') %>
+  <script src="/assets/study.js" defer></script>
+</head>
+<body>
+  <%- include('partials/nav') %>
+  <main class="workspace">
+    <section class="translator-shell" aria-labelledby="study-title">
+      <div class="workspace-heading">
+        <div>
+          <p class="eyebrow">학습 관리</p>
+          <h1 id="study-title">단어장 · 기록 · 오답</h1>
+        </div>
+        <div class="heading-actions">
+          <a class="small-button" href="/word-test">단어 테스트</a>
+          <a class="small-button" href="/api/vocabulary.csv" download="japanese-vocabulary.csv">CSV 내보내기</a>
+          <button id="dark-mode-button" type="button" class="ghost-button">다크모드</button>
+          <div class="session-badge"><%= currentUser.username %></div>
+        </div>
+      </div>
+
+      <section class="analysis-section">
+        <div class="tool-body study-summary">
+          <div class="stat-row" id="stats-output">
+            <span>오늘 분석 <strong><%= dashboard.stats.today_history %></strong></span>
+            <span>단어장 <strong><%= dashboard.stats.vocabulary_count %></strong></span>
+            <span>즐겨찾기 <strong><%= dashboard.stats.favorite_count %></strong></span>
+            <span>오답 <strong><%= dashboard.stats.wrong_count %></strong></span>
+            <span>퀴즈 정답률 <strong><%= dashboard.stats.quiz_accuracy %>%</strong></span>
+          </div>
+          <div class="tool-row">
+            <button id="favorite-sentence-button" type="button" class="small-button">최근 분석 문장 즐겨찾기</button>
+            <button id="quiz-start-button" type="button" class="small-button">빠른 복습 퀴즈</button>
+          </div>
+          <div id="quiz-box" class="quiz-box"></div>
+        </div>
+      </section>
+
+      <section class="feature-grid">
+        <section class="analysis-section" aria-labelledby="vocabulary-title">
+          <div class="section-heading split-heading">
+            <h2 id="vocabulary-title">단어장</h2>
+            <span class="muted" data-count-for="vocabulary"></span>
+          </div>
+          <div id="vocabulary-list" class="mini-list paged-list"></div>
+          <div class="pagination" data-pagination="vocabulary">
+            <button type="button" class="small-button" data-page-prev="vocabulary">이전</button>
+            <span data-page-label="vocabulary">1 / 1</span>
+            <button type="button" class="small-button" data-page-next="vocabulary">다음</button>
+          </div>
+        </section>
+
+        <section class="analysis-section" aria-labelledby="example-title">
+          <div class="section-heading">
+            <h2 id="example-title">예문 생성</h2>
+          </div>
+          <div class="tool-body">
+            <div class="kana-converter">
+              <input id="example-term" placeholder="예문을 만들 단어">
+              <button id="example-button" type="button" class="small-button">생성</button>
+            </div>
+            <div id="example-output" class="mini-list"></div>
+          </div>
+        </section>
+      </section>
+
+      <section class="feature-grid">
+        <section class="analysis-section" aria-labelledby="favorite-title">
+          <div class="section-heading split-heading">
+            <h2 id="favorite-title">즐겨찾기</h2>
+            <span class="muted" data-count-for="favorites"></span>
+          </div>
+          <div id="favorite-list" class="mini-list paged-list"></div>
+          <div class="pagination" data-pagination="favorites">
+            <button type="button" class="small-button" data-page-prev="favorites">이전</button>
+            <span data-page-label="favorites">1 / 1</span>
+            <button type="button" class="small-button" data-page-next="favorites">다음</button>
+          </div>
+        </section>
+
+        <section class="analysis-section" aria-labelledby="history-title">
+          <div class="section-heading split-heading">
+            <h2 id="history-title">최근 검색 기록</h2>
+            <span class="muted" data-count-for="history"></span>
+          </div>
+          <div id="history-list" class="mini-list paged-list"></div>
+          <div class="pagination" data-pagination="history">
+            <button type="button" class="small-button" data-page-prev="history">이전</button>
+            <span data-page-label="history">1 / 1</span>
+            <button type="button" class="small-button" data-page-next="history">다음</button>
+          </div>
+        </section>
+      </section>
+
+      <section class="analysis-section" aria-labelledby="wrong-note-title">
+        <div class="section-heading split-heading">
+          <h2 id="wrong-note-title">오답노트</h2>
+          <span class="muted" data-count-for="wrongNotes"></span>
+        </div>
+        <div id="wrong-note-list" class="mini-list paged-list"></div>
+        <div class="pagination" data-pagination="wrongNotes">
+          <button type="button" class="small-button" data-page-prev="wrongNotes">이전</button>
+          <span data-page-label="wrongNotes">1 / 1</span>
+          <button type="button" class="small-button" data-page-next="wrongNotes">다음</button>
+        </div>
+      </section>
+    </section>
+  </main>
+</body>
+</html>

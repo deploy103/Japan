@@ -28,28 +28,11 @@ const difficultyOutput = document.querySelector('#difficulty-output');
 const structureOutput = document.querySelector('#structure-output');
 const particleOutput = document.querySelector('#particle-output');
 const katakanaOutput = document.querySelector('#katakana-output');
-const favoriteSentenceButton = document.querySelector('#favorite-sentence-button');
-const quizStartButton = document.querySelector('#quiz-start-button');
-const quizBox = document.querySelector('#quiz-box');
-const statsOutput = document.querySelector('#stats-output');
-const vocabularyList = document.querySelector('#vocabulary-list');
-const favoriteList = document.querySelector('#favorite-list');
-const historyList = document.querySelector('#history-list');
-const wrongNoteList = document.querySelector('#wrong-note-list');
 const darkModeButton = document.querySelector('#dark-mode-button');
-const exampleTerm = document.querySelector('#example-term');
-const exampleButton = document.querySelector('#example-button');
-const exampleOutput = document.querySelector('#example-output');
 
 let lastKanji = [];
 let lastResult = null;
 let lastKoJaTranslation = '';
-let currentQuiz = null;
-const FAVORITE_TYPE_KO = {
-  word: '단어',
-  kanji: '한자',
-  sentence: '문장'
-};
 const PROVIDER_LABELS = {
   cache: '서버 저장값',
   'local-exact': '로컬 예문',
@@ -190,7 +173,7 @@ function renderWords(words) {
     saveButton.type = 'button';
     saveButton.className = 'small-button';
     saveButton.textContent = '저장';
-    saveButton.addEventListener('click', () => saveVocabulary(word));
+    saveButton.addEventListener('click', () => saveVocabulary(word, saveButton));
     actionCell.append(saveButton);
     row.append(actionCell);
     wordOutput.append(row);
@@ -367,7 +350,6 @@ function renderResult(data, cacheHeader = '') {
   renderWords(data.words);
   renderKanjiList(data.kanji);
   renderGrammar(data);
-  refreshDashboard();
 }
 
 async function apiPostWithMeta(url, body) {
@@ -433,140 +415,19 @@ async function translateKoreanToJapanese() {
   }
 }
 
-async function saveVocabulary(word) {
+async function saveVocabulary(word, button) {
+  if (button) {
+    button.disabled = true;
+    button.textContent = '저장 중';
+  }
   await apiPost('/api/vocabulary', {
     term: word.surface,
     reading: word.reading,
     meaning: word.meaning,
     sourceText: lastResult?.source || sourceText.value
   });
-  await refreshDashboard();
-}
-
-async function refreshDashboard() {
-  const response = await fetch('/api/dashboard');
-  if (!response.ok) {
-    return;
-  }
-  const data = await response.json();
-  renderDashboard(data);
-}
-
-function renderDashboard(data) {
-  statsOutput.replaceChildren();
-  for (const item of [
-    ['오늘 분석', data.stats.today_history],
-    ['단어장', data.stats.vocabulary_count],
-    ['즐겨찾기', data.stats.favorite_count],
-    ['퀴즈 정답률', `${data.stats.quiz_accuracy}%`]
-  ]) {
-    const chip = document.createElement('span');
-    chip.append(document.createTextNode(`${item[0]} `));
-    const value = document.createElement('strong');
-    value.textContent = item[1];
-    chip.append(value);
-    statsOutput.append(chip);
-  }
-
-  vocabularyList.replaceChildren();
-  if (!data.vocabulary.length) {
-    vocabularyList.append(emptyText('저장된 단어가 없습니다.'));
-  } else {
-  for (const item of data.vocabulary.slice(0, 12)) {
-      const row = document.createElement('div');
-      row.className = 'mini-item';
-      const term = document.createElement('strong');
-      const reading = document.createElement('span');
-      const meaning = document.createElement('small');
-      term.textContent = item.term;
-      reading.textContent = item.reading || '-';
-      meaning.textContent = item.meaning || '-';
-      const remove = document.createElement('button');
-      remove.type = 'button';
-      remove.className = 'small-button';
-      remove.textContent = '삭제';
-      remove.addEventListener('click', async () => {
-        await apiDelete(`/api/vocabulary/${item.id}`);
-        await refreshDashboard();
-      });
-      row.append(term, reading, meaning, remove);
-      vocabularyList.append(row);
-    }
-  }
-
-  favoriteList.replaceChildren();
-  if (!data.favorites.length) {
-    favoriteList.append(emptyText('즐겨찾기가 없습니다.'));
-  } else {
-    for (const item of data.favorites.slice(0, 8)) {
-      const row = document.createElement('div');
-      row.className = 'mini-item';
-      const text = document.createElement('strong');
-      const type = document.createElement('span');
-      const note = document.createElement('small');
-      text.textContent = item.item_text;
-      type.textContent = FAVORITE_TYPE_KO[item.item_type] || item.item_type;
-      note.textContent = item.note || '';
-      const remove = document.createElement('button');
-      remove.type = 'button';
-      remove.className = 'small-button';
-      remove.textContent = '삭제';
-      remove.addEventListener('click', async () => {
-        await apiDelete(`/api/favorites/${item.id}`);
-        await refreshDashboard();
-      });
-      row.append(text, type, note, remove);
-      favoriteList.append(row);
-    }
-  }
-
-  historyList.replaceChildren();
-  if (!data.history.length) {
-    historyList.append(emptyText('아직 검색 기록이 없습니다.'));
-  } else {
-    for (const item of data.history.slice(0, 8)) {
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = 'history-item';
-      const source = document.createElement('strong');
-      const translation = document.createElement('span');
-      source.textContent = item.source_text;
-      translation.textContent = item.translation_text || '';
-      button.append(source, translation);
-      button.addEventListener('click', () => {
-        sourceText.value = item.source_text;
-        updateCount();
-        analyze(false);
-      });
-      const wrap = document.createElement('div');
-      wrap.className = 'mini-item';
-      const remove = document.createElement('button');
-      remove.type = 'button';
-      remove.className = 'small-button';
-      remove.textContent = '삭제';
-      remove.addEventListener('click', async () => {
-        await apiDelete(`/api/history/${item.id}`);
-        await refreshDashboard();
-      });
-      wrap.append(button, remove);
-      historyList.append(wrap);
-    }
-  }
-
-  wrongNoteList.replaceChildren();
-  if (!data.wrongNotes.length) {
-    wrongNoteList.append(emptyText('아직 오답이 없습니다.'));
-  } else {
-    for (const item of data.wrongNotes.slice(0, 8)) {
-      const row = document.createElement('div');
-      row.className = 'mini-item';
-      const term = document.createElement('strong');
-      const answer = document.createElement('span');
-      term.textContent = item.term;
-      answer.textContent = `입력: ${item.submitted_answer || '-'}`;
-      row.append(term, answer);
-      wrongNoteList.append(row);
-    }
+  if (button) {
+    button.textContent = '저장됨';
   }
 }
 
@@ -732,91 +593,6 @@ koJaUseButton.addEventListener('click', () => {
   analyze(true);
 });
 
-favoriteSentenceButton.addEventListener('click', async () => {
-  const itemText = sourceText.value.trim();
-  if (!itemText) {
-    return;
-  }
-  await apiPost('/api/favorites', {
-    itemType: 'sentence',
-    itemText,
-    note: lastResult?.translation?.text || ''
-  });
-  await refreshDashboard();
-});
-
-quizStartButton.addEventListener('click', async () => {
-  try {
-    const response = await fetch('/api/quiz');
-    const data = await response.json();
-    if (!response.ok) {
-      throw new Error(data.error || '퀴즈를 만들 수 없습니다.');
-    }
-    currentQuiz = data;
-    quizBox.replaceChildren();
-    const prompt = document.createElement('p');
-    prompt.textContent = data.prompt;
-    const row = document.createElement('div');
-    row.className = 'quiz-row';
-    const input = document.createElement('input');
-    input.id = 'quiz-answer';
-    input.placeholder = '정답 입력';
-    const submit = document.createElement('button');
-    submit.id = 'quiz-submit';
-    submit.className = 'small-button';
-    submit.type = 'button';
-    submit.textContent = '채점';
-    const result = document.createElement('div');
-    result.id = 'quiz-result';
-    result.className = 'muted';
-    row.append(input, submit);
-    quizBox.append(prompt, row, result);
-    submit.addEventListener('click', submitQuiz);
-  } catch (error) {
-    quizBox.textContent = error.message;
-  }
-});
-
-async function submitQuiz() {
-  const answer = document.querySelector('#quiz-answer')?.value || '';
-  const result = await apiPost('/api/quiz', {
-    vocabularyId: currentQuiz.vocabularyId,
-    answer
-  });
-  const target = document.querySelector('#quiz-result');
-  target.textContent = result.isCorrect ? '정답입니다.' : `오답입니다. 정답: ${result.correctAnswer}`;
-  await refreshDashboard();
-}
-
-exampleButton.addEventListener('click', async () => {
-  const term = exampleTerm.value.trim() || lastResult?.words?.find((word) => word.meaning)?.surface || '';
-  if (!term) {
-    return;
-  }
-  exampleOutput.replaceChildren(emptyText('예문 생성 중'));
-  try {
-    const { data, cacheHeader } = await apiPostWithMeta('/api/examples', { term });
-    exampleOutput.replaceChildren();
-    const status = document.createElement('div');
-    status.className = `mini-status ${providerClass(data.provider, cacheHeader)}`;
-    status.textContent = PROVIDER_LABELS[cacheHeader ? 'cache' : data.provider] || data.note || '예문';
-    status.title = data.note || '';
-    exampleOutput.append(status);
-    for (const example of data.examples) {
-      const row = document.createElement('div');
-      row.className = 'mini-item';
-      const japanese = document.createElement('strong');
-      const korean = document.createElement('span');
-      japanese.textContent = example.japanese || String(example);
-      korean.textContent = example.korean || '';
-      row.append(japanese, korean);
-      exampleOutput.append(row);
-    }
-  } catch (error) {
-    exampleOutput.replaceChildren(emptyText(error.message));
-  }
-});
-
 darkModeButton.addEventListener('click', () => {
   document.body.classList.toggle('dark-mode');
   localStorage.setItem('dark-mode', document.body.classList.contains('dark-mode') ? '1' : '0');
@@ -825,13 +601,5 @@ darkModeButton.addEventListener('click', () => {
 if (localStorage.getItem('dark-mode') === '1') {
   document.body.classList.add('dark-mode');
 }
-
-document.querySelectorAll('.history-item').forEach((item) => {
-  item.addEventListener('click', () => {
-    sourceText.value = item.dataset.text || '';
-    updateCount();
-    analyze(false);
-  });
-});
 
 updateCount();

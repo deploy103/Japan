@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <%- include('partials/head') %>
+  <script src="/assets/wordTest.js" defer></script>
+</head>
+<body>
+  <%- include('partials/nav') %>
+  <main class="workspace">
+    <section class="translator-shell" aria-labelledby="word-test-title">
+      <div class="workspace-heading">
+        <div>
+          <p class="eyebrow">단어 테스트</p>
+          <h1 id="word-test-title">저장 단어 복습</h1>
+        </div>
+        <div class="heading-actions">
+          <a class="small-button" href="/study">학습 관리</a>
+          <button id="dark-mode-button" type="button" class="ghost-button">다크모드</button>
+          <div class="session-badge"><%= currentUser.username %></div>
+        </div>
+      </div>
+
+      <section class="test-shell">
+        <aside class="analysis-section test-side">
+          <div class="section-heading">
+            <h2>테스트 설정</h2>
+          </div>
+          <div class="tool-body">
+            <div class="segmented-control" role="group" aria-label="테스트 모드">
+              <button type="button" class="active" data-mode="term">뜻 → 단어</button>
+              <button type="button" data-mode="meaning">단어 → 뜻</button>
+            </div>
+            <div class="stat-row" id="test-stats">
+              <span>단어장 <strong>0</strong></span>
+              <span>문항 <strong>0</strong></span>
+            </div>
+            <button id="test-start-button" type="button" class="primary-button">시작</button>
+            <a class="small-button" href="/study">단어장 관리</a>
+          </div>
+        </aside>
+
+        <section class="analysis-section test-main" aria-live="polite">
+          <div class="section-heading split-heading">
+            <h2 id="test-progress">대기 중</h2>
+            <span id="test-score" class="provider-badge provider-idle">0 / 0</span>
+          </div>
+          <div class="test-card">
+            <p id="test-prompt" class="test-prompt">테스트를 시작하면 문제가 표시됩니다.</p>
+            <div class="quiz-row">
+              <input id="test-answer" autocomplete="off" placeholder="정답 입력">
+              <button id="test-submit-button" type="button" class="small-button">채점</button>
+            </div>
+            <div id="test-feedback" class="mini-result"></div>
+          </div>
+          <div id="test-review" class="mini-list"></div>
+        </section>
+      </section>
+    </section>
+  </main>
+</body>
+</html>
