@@ -24,6 +24,7 @@ const MAX_TEXT_LENGTH = 3000;
 const NEEDS_MEANING = '뜻 보강 필요';
 const MAX_AI_MEANING_ITEMS = 40;
 let tokenizerPromise;
+const analysisInFlight = new Map();
 
 const POS_KO = {
   名詞: '명사',
@@ -259,6 +260,13 @@ function parseJsonArrayText(text) {
 
 function stripWrappingQuotes(text) {
   return String(text || '').trim().replace(/^["'「『]+|["'」』]+$/g, '').trim();
+}
+
+function analysisRequestKey(text) {
+  return String(text || '')
+    .trim()
+    .normalize('NFKC')
+    .replace(/\s+/g, ' ');
 }
 
 function cleanMeaningList(value, limit = 4) {
@@ -856,6 +864,21 @@ async function analyzeJapanese(text) {
     return cachedAnalysis;
   }
 
+  const requestKey = analysisRequestKey(input);
+  const activeAnalysis = analysisInFlight.get(requestKey);
+  if (activeAnalysis) {
+    return activeAnalysis;
+  }
+
+  const analysisPromise = analyzeJapaneseFresh(input)
+    .finally(() => {
+      analysisInFlight.delete(requestKey);
+    });
+  analysisInFlight.set(requestKey, analysisPromise);
+  return analysisPromise;
+}
+
+async function analyzeJapaneseFresh(input) {
   const tokenizer = await getTokenizer();
   let tokens = applyCachedWordMeanings(tokenizer.tokenize(input).map(simplifyToken));
   const kanji = extractKanji(input).slice(0, 80);
