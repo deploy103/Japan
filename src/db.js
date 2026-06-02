@@ -147,6 +147,87 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_wrong_notes_user_created ON wrong_notes(user_id, created_at DESC);
 `);
 
+function normalizeCacheText(value) {
+  return String(value || '').trim();
+}
+
+function normalizeCachePos(value) {
+  return normalizeCacheText(value).toLowerCase();
+}
+
+function cleanCachedMeanings(value, limit = 4) {
+  const raw = Array.isArray(value)
+    ? value
+    : String(value || '').split(/[,;/、\n]/);
+  const meanings = raw
+    .map((item) => normalizeCacheText(item).replace(/[.。]+$/g, ''))
+    .filter((item) => item && item !== '뜻 보강 필요');
+  return Array.from(new Set(meanings)).slice(0, limit);
+}
+
+function insertMeaningCache({ itemType, cacheKey, term, reading = '', pos = '', meanings, source, timestamp }) {
+  const cleaned = cleanCachedMeanings(meanings);
+  const normalizedTerm = normalizeCacheText(term);
+  const normalizedKey = normalizeCacheText(cacheKey);
+  if (!normalizedKey || !normalizedTerm || !cleaned.length) {
+    return;
+  }
+
+  db.prepare(`
+    INSERT OR IGNORE INTO meaning_cache (item_type, cache_key, term, reading, pos, meanings_json, source, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    itemType,
+    normalizedKey,
+    normalizedTerm,
+    normalizeCacheText(reading),
+    normalizeCachePos(pos),
+    JSON.stringify(cleaned),
+    source,
+    timestamp,
+    timestamp
+  );
+}
+
+function insertWordMeaningCache({ surface, base, reading, pos, meanings, source, timestamp }) {
+  const normalizedReading = normalizeCacheText(reading);
+  const normalizedPos = normalizeCachePos(pos);
+  const terms = Array.from(new Set([
+    normalizeCacheText(surface),
+    normalizeCacheText(base)
+  ].filter(Boolean)));
+
+  for (const term of terms) {
+    insertMeaningCache({
+      itemType: 'word',
+      cacheKey: `word:${term}:${normalizedReading}:${normalizedPos}`,
+      term,
+      reading: normalizedReading,
+      pos: normalizedPos,
+      meanings,
+      source,
+      timestamp
+    });
+    insertMeaningCache({
+      itemType: 'word',
+      cacheKey: `word:${term}::${normalizedPos}`,
+      term,
+      pos: normalizedPos,
+      meanings,
+      source,
+      timestamp
+    });
+    insertMeaningCache({
+      itemType: 'word',
+      cacheKey: `word:${term}::`,
+      term,
+      meanings,
+      source,
+      timestamp
+    });
+  }
+}
+
 db.exec(`
   INSERT OR IGNORE INTO translation_cache (direction, source_text, translation_text, provider, created_at, updated_at)
   SELECT
@@ -179,17 +260,66 @@ for (const row of vocabularyCacheRows) {
     continue;
   }
   const timestamp = row.updated_at || row.created_at || new Date().toISOString();
-  db.prepare(`
-    INSERT OR IGNORE INTO meaning_cache (item_type, cache_key, term, reading, pos, meanings_json, source, created_at, updated_at)
-    VALUES ('word', ?, ?, ?, '', ?, 'vocabulary', ?, ?)
-  `).run(
-    `word:${term}::`,
-    term,
-    String(row.reading || '').trim(),
-    JSON.stringify([meaning]),
-    timestamp,
+  insertWordMeaningCache({
+    surface: term,
+    base: term,
+    reading: row.reading,
+    pos: '',
+    meanings: [meaning],
+    source: 'vocabulary',
     timestamp
-  );
+  });
+}
+
+const historySummaryRows = db.prepare(`
+  SELECT summary_json, created_at
+  FROM search_history
+  WHERE TRIM(COALESCE(summary_json, '')) <> ''
+`).all();
+
+for (const row of historySummaryRows) {
+  let summary;
+  try {
+    summary = JSON.parse(row.summary_json);
+  } catch (error) {
+    continue;
+  }
+
+  const timestamp = row.created_at || new Date().toISOString();
+  for (const word of summary.words || []) {
+    insertWordMeaningCache({
+      surface: word.surface,
+      base: word.base,
+      reading: word.reading,
+      pos: word.posKo || word.pos,
+      meanings: word.meaning,
+      source: 'history',
+      timestamp
+    });
+  }
+
+  for (const detail of summary.kanji || []) {
+    insertMeaningCache({
+      itemType: 'kanji',
+      cacheKey: `kanji:${normalizeCacheText(detail.char)}`,
+      term: detail.char,
+      meanings: detail.meaningsKo || detail.meanings,
+      source: 'history',
+      timestamp
+    });
+
+    for (const example of detail.examples || []) {
+      insertWordMeaningCache({
+        surface: example.written,
+        base: example.written,
+        reading: example.pronounced,
+        pos: '명사',
+        meanings: example.meanings,
+        source: 'history',
+        timestamp
+      });
+    }
+  }
 }
 
 function nowIso() {
