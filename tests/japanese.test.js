@@ -101,6 +101,18 @@ test('example generation is cached after first local result', async () => {
   assert.equal(second.examples[0].japanese, first.examples[0].japanese);
 });
 
+test('concurrent example generation shares one in-flight result', async () => {
+  const [first, second] = await Promise.all([
+    generateExamples('空港'),
+    generateExamples('空港')
+  ]);
+  assert.equal(first.provider, 'local-template');
+  assert.deepEqual(second, first);
+
+  const cached = await generateExamples('空港');
+  assert.equal(cached.provider, 'cache');
+});
+
 test('common everyday words resolve from the local Korean dictionary', async () => {
   const result = await analyzeJapanese('銀行でお金を下ろします。駅で電車を待ちます。週末に友達と映画を見ます。');
   const missing = result.words

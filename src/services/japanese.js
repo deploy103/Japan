@@ -28,6 +28,7 @@ const NEEDS_MEANING = '뜻 보강 필요';
 const MAX_AI_MEANING_ITEMS = 40;
 let tokenizerPromise;
 const analysisInFlight = new Map();
+const exampleInFlight = new Map();
 
 const POS_KO = {
   名詞: '명사',
@@ -830,6 +831,21 @@ async function generateExamples(term) {
     return cached;
   }
 
+  const requestKey = analysisRequestKey(value);
+  const activeRequest = exampleInFlight.get(requestKey);
+  if (activeRequest) {
+    return activeRequest;
+  }
+
+  const request = generateExamplesFresh(value)
+    .finally(() => {
+      exampleInFlight.delete(requestKey);
+    });
+  exampleInFlight.set(requestKey, request);
+  return request;
+}
+
+async function generateExamplesFresh(value) {
   const openai = await callOpenAI({
     instructions: '일본어 학습자를 위해 입력 단어를 사용한 짧은 일본어 예문 3개와 한국어 번역을 JSON 배열로만 출력한다. 각 항목은 japanese, korean 키를 가진다.',
     input: value,
