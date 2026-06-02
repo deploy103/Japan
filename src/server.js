@@ -49,6 +49,15 @@ const SECURITY_EVENT_LABELS = {
   user_status_changed: '계정 상태 변경',
   user_role_changed: '계정 권한 변경'
 };
+const AI_OPERATION_LABELS = {
+  word_meaning: '단어 뜻 보강',
+  kanji_meaning: '한자 뜻 보강',
+  ja_ko_translation: '일본어 번역',
+  ko_ja_translation: '한국어 번역',
+  examples: '예문 생성',
+  ocr: 'OCR',
+  unknown: '기타'
+};
 
 const app = express();
 
@@ -592,6 +601,18 @@ function pruneSecurityEvents() {
   `).run();
 }
 
+function pruneAiUsageEvents() {
+  db.prepare(`
+    DELETE FROM ai_usage_events
+    WHERE id NOT IN (
+      SELECT id
+      FROM ai_usage_events
+      ORDER BY created_at DESC, id DESC
+      LIMIT 20000
+    )
+  `).run();
+}
+
 function cacheSummary(tableName, where = '') {
   const row = db.prepare(`
     SELECT
@@ -633,6 +654,25 @@ function getSecurityEvents() {
   }));
 }
 
+function getAiUsageStats() {
+  return db.prepare(`
+    SELECT
+      operation,
+      COUNT(*) AS request_count,
+      COALESCE(SUM(input_tokens), 0) AS input_tokens,
+      COALESCE(SUM(output_tokens), 0) AS output_tokens,
+      COALESCE(SUM(total_tokens), 0) AS total_tokens,
+      MAX(created_at) AS latest_use
+    FROM ai_usage_events
+    GROUP BY operation
+    ORDER BY total_tokens DESC, request_count DESC
+    LIMIT 20
+  `).all().map((row) => ({
+    ...row,
+    label: AI_OPERATION_LABELS[row.operation] || row.operation
+  }));
+}
+
 app.use(loadSession);
 app.use(ensureGuestCsrf);
 app.use(originGuard);
@@ -641,9 +681,11 @@ app.use(csrfGuard);
 setInterval(pruneExpiredSessions, 1000 * 60 * 30).unref();
 setInterval(pruneLearningCaches, 1000 * 60 * 60 * 6).unref();
 setInterval(pruneSecurityEvents, 1000 * 60 * 60 * 6).unref();
+setInterval(pruneAiUsageEvents, 1000 * 60 * 60 * 6).unref();
 pruneExpiredSessions();
 pruneLearningCaches();
 pruneSecurityEvents();
+pruneAiUsageEvents();
 
 app.get('/', (req, res) => {
   res.redirect(req.user ? '/app' : '/login');
@@ -1014,6 +1056,7 @@ app.get('/admin', requireAdmin, (req, res) => {
     title: '관리자',
     users,
     cacheStats: getCacheStats(),
+    aiUsageStats: getAiUsageStats(),
     securityEvents: getSecurityEvents()
   });
 });

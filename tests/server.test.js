@@ -153,6 +153,7 @@ test('server auth and learning API flow works', { timeout: 30000 }, async () => 
     assert.equal(response.status, 200);
     const adminHtml = await response.text();
     assert.match(adminHtml, /보안 이벤트/);
+    assert.match(adminHtml, /AI 사용량/);
     assert.match(adminHtml, /로그인 실패/);
     assert.match(adminHtml, /계정 생성/);
 

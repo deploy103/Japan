@@ -3,6 +3,7 @@ const kuromoji = require('kuromoji');
 const wanakana = require('wanakana');
 const kanjiData = require('kanji-data');
 const config = require('../config');
+const { db, nowIso } = require('../db');
 const {
   PARTICLE_DESCRIPTIONS,
   translateGlosses,
@@ -301,7 +302,36 @@ function parseAiMeaningMap(text) {
 }
 
 // OpenAI 호출은 한 곳으로 모아 timeout, store:false, 키 은닉 처리를 일관되게 유지한다.
-async function callOpenAI({ instructions, input, maxOutputTokens = 900 }) {
+function usageNumber(value) {
+  return Number.isFinite(Number(value)) ? Number(value) : 0;
+}
+
+function logAiUsage(operation, data) {
+  const usage = data?.usage;
+  if (!usage) {
+    return;
+  }
+  const inputTokens = usageNumber(usage.input_tokens ?? usage.prompt_tokens);
+  const outputTokens = usageNumber(usage.output_tokens ?? usage.completion_tokens);
+  const totalTokens = usageNumber(usage.total_tokens) || inputTokens + outputTokens;
+  try {
+    db.prepare(`
+      INSERT INTO ai_usage_events (operation, model, input_tokens, output_tokens, total_tokens, created_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(
+      String(operation || 'unknown').slice(0, 80),
+      String(config.openaiModel || '').slice(0, 80),
+      inputTokens,
+      outputTokens,
+      totalTokens,
+      nowIso()
+    );
+  } catch (error) {
+    // AI 사용량 로깅 실패가 학습 기능 자체를 막지 않도록 분리한다.
+  }
+}
+
+async function callOpenAI({ instructions, input, maxOutputTokens = 900, operation = 'unknown' }) {
   if (!config.openaiApiKey) {
     return null;
   }
@@ -328,7 +358,9 @@ async function callOpenAI({ instructions, input, maxOutputTokens = 900 }) {
     if (!response.ok) {
       throw new Error(`OpenAI responded with ${response.status}`);
     }
-    return extractOutputText(await response.json());
+    const data = await response.json();
+    logAiUsage(operation, data);
+    return extractOutputText(data);
   } finally {
     clearTimeout(timeout);
   }
@@ -464,7 +496,8 @@ async function enrichWordMeaningsWithOpenAI(tokens) {
         '조사는 뜻 대신 문장 안 역할을 짧게 쓴다. 모르면 빈 배열을 쓴다.'
       ].join('\n'),
       input: JSON.stringify(requests),
-      maxOutputTokens: 900
+      maxOutputTokens: 900,
+      operation: 'word_meaning'
     });
     const meaningsById = parseAiMeaningMap(output);
     if (!meaningsById.size) {
@@ -535,7 +568,8 @@ async function enrichKanjiDetailsWithOpenAI(kanjiDetails) {
         '일본어 설명, 마크다운, 문장 해설은 넣지 않는다. 모르면 빈 배열을 쓴다.'
       ].join('\n'),
       input: JSON.stringify(requests),
-      maxOutputTokens: 1200
+      maxOutputTokens: 1200,
+      operation: 'kanji_meaning'
     });
     const meaningsById = parseAiMeaningMap(output);
     if (!meaningsById.size) {
@@ -596,7 +630,8 @@ async function openAITranslate(text) {
       '고유명사와 숫자는 보존하고, 일본어 학습자가 이해하기 쉬운 표현을 사용한다.'
     ].join('\n'),
     input: text,
-    maxOutputTokens: 500
+    maxOutputTokens: 500,
+    operation: 'ja_ko_translation'
   });
   if (!translated) {
     return null;
@@ -646,7 +681,8 @@ async function translateKoreanToJapanese(text) {
       '학습자가 문장 구조를 비교할 수 있도록 지나친 의역은 피하고 자연스러운 표준 일본어를 사용한다.'
     ].join('\n'),
     input,
-    maxOutputTokens: 500
+    maxOutputTokens: 500,
+    operation: 'ko_ja_translation'
   });
 
   if (translated) {
@@ -805,7 +841,8 @@ async function generateExamples(term) {
   const openai = await callOpenAI({
     instructions: '일본어 학습자를 위해 입력 단어를 사용한 짧은 일본어 예문 3개와 한국어 번역을 JSON 배열로만 출력한다. 각 항목은 japanese, korean 키를 가진다.',
     input: value,
-    maxOutputTokens: 700
+    maxOutputTokens: 700,
+    operation: 'examples'
   });
 
   if (openai) {
@@ -870,7 +907,8 @@ async function ocrImage(dataUrl) {
         ]
       }
     ],
-    maxOutputTokens: 700
+    maxOutputTokens: 700,
+    operation: 'ocr'
   });
 
   return {

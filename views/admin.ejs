@@ -44,6 +44,37 @@
         <table class="admin-table">
           <thead>
             <tr>
+              <th>AI 사용량</th>
+              <th>호출</th>
+              <th>입력 토큰</th>
+              <th>출력 토큰</th>
+              <th>합계</th>
+              <th>최근 사용</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% if (aiUsageStats.length === 0) { %>
+              <tr><td colspan="6" class="empty-cell">아직 기록된 AI 사용량이 없습니다.</td></tr>
+            <% } else { %>
+              <% aiUsageStats.forEach((item) => { %>
+                <tr>
+                  <td><strong><%= item.label %></strong></td>
+                  <td><%= item.request_count %></td>
+                  <td><%= item.input_tokens %></td>
+                  <td><%= item.output_tokens %></td>
+                  <td><strong><%= item.total_tokens %></strong></td>
+                  <td><%= item.latest_use ? new Date(item.latest_use).toLocaleString('ko-KR') : '-' %></td>
+                </tr>
+              <% }) %>
+            <% } %>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="admin-table-wrap">
+        <table class="admin-table">
+          <thead>
+            <tr>
               <th>보안 이벤트</th>
               <th>아이디</th>
               <th>IP 해시</th>
