@@ -109,3 +109,11 @@ test('common everyday words resolve from the local Korean dictionary', async () 
     .map((word) => word.surface);
   assert.deepEqual(missing, []);
 });
+
+test('complete kanji sentence analysis is cached even when examples are partial', async () => {
+  const first = await analyzeJapanese('銀行でお金を下ろします。');
+  assert.notEqual(first.translation.provider, 'cache');
+
+  const second = await analyzeJapanese('銀行でお金を下ろします。');
+  assert.equal(second.translation.provider, 'cache');
+});

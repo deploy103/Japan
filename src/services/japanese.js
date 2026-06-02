@@ -392,17 +392,9 @@ function hasMissingTokenMeanings(tokens) {
   return tokens.some((token) => needsMeaningForLocalTranslation(token) && !token.meaning);
 }
 
-function hasMissingKanjiMeanings(kanjiDetails) {
-  return kanjiDetails.some((detail) => (
-    !hasUsefulMeanings(detail.meaningsKo) ||
-    detail.examples.some((example) => !hasUsefulMeanings(example.meanings))
-  ));
-}
-
 function isCacheableAnalysis(result) {
   return Boolean(result?.translation?.text)
-    && !hasMissingTokenMeanings(result.words || [])
-    && !hasMissingKanjiMeanings(result.kanji || []);
+    && !hasMissingTokenMeanings(result.words || []);
 }
 
 function applyCachedWordMeanings(tokens) {
