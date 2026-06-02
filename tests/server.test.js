@@ -147,6 +147,9 @@ test('server auth and learning API flow works', { timeout: 30000 }, async () => 
     const appHtml = await response.text();
     const csrf = extractCsrf(appHtml);
     assert.ok(csrf);
+    assert.match(appHtml, /Japan Lab/);
+    assert.match(appHtml, /theme\.js\?v=/);
+    assert.equal((appHtml.match(/id="dark-mode-button"/g) || []).length, 1);
     assert.match(appHtml, /학습 관리/);
     assert.match(appHtml, /단어 테스트/);
     const testDb = new DatabaseSync(databasePath);
@@ -171,6 +174,7 @@ test('server auth and learning API flow works', { timeout: 30000 }, async () => 
     const studyHtml = await response.text();
     assert.match(studyHtml, /단어장 · 기록 · 오답/);
     assert.match(studyHtml, /1 \/ 1/);
+    assert.equal((studyHtml.match(/id="dark-mode-button"/g) || []).length, 1);
 
     response = await fetch(`http://localhost:${port}/word-test`, {
       headers: { cookie: cookieHeader(cookies) }
@@ -178,6 +182,7 @@ test('server auth and learning API flow works', { timeout: 30000 }, async () => 
     assert.equal(response.status, 200);
     const wordTestHtml = await response.text();
     assert.match(wordTestHtml, /저장 단어 복습/);
+    assert.equal((wordTestHtml.match(/id="dark-mode-button"/g) || []).length, 1);
 
     response = await fetch(`http://localhost:${port}/api/analyze`, {
       method: 'POST',

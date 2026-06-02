@@ -1,20 +1,36 @@
 <header class="topbar">
-  <a class="brand" href="<%= currentUser ? '/app' : '/login' %>" aria-label="일본어 학습 보조 홈">
-    <span class="brand-mark">日</span>
-    <span class="brand-text">일본어 학습 보조</span>
-  </a>
-  <% if (currentUser) { %>
-    <nav class="nav-links" aria-label="주요 메뉴">
-      <a class="<%= path === '/app' ? 'active' : '' %>" href="/app">분석</a>
-      <a class="<%= path === '/study' ? 'active' : '' %>" href="/study">학습</a>
-      <a class="<%= path === '/word-test' ? 'active' : '' %>" href="/word-test">단어 테스트</a>
-      <% if (currentUser.role === 'admin') { %>
-        <a class="<%= path === '/admin' ? 'active' : '' %>" href="/admin">관리자</a>
-      <% } %>
-      <form action="/logout" method="post" class="logout-form">
-        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-        <button type="submit" class="ghost-button">로그아웃</button>
-      </form>
-    </nav>
-  <% } %>
+  <div class="topbar-inner">
+    <a class="brand" href="<%= currentUser ? '/app' : '/login' %>" aria-label="일본어 학습 보조 홈">
+      <span class="brand-mark">日</span>
+      <span class="brand-copy">
+        <span class="brand-text">Japan Lab</span>
+        <span class="brand-subtitle">일본어 분석 스튜디오</span>
+      </span>
+    </a>
+
+    <% if (currentUser) { %>
+      <nav class="nav-links" aria-label="주요 메뉴">
+        <a class="<%= path === '/app' ? 'active' : '' %>" href="/app">분석</a>
+        <a class="<%= path === '/study' ? 'active' : '' %>" href="/study">학습</a>
+        <a class="<%= path === '/word-test' ? 'active' : '' %>" href="/word-test">단어 테스트</a>
+        <% if (currentUser.role === 'admin') { %>
+          <a class="<%= path === '/admin' ? 'active' : '' %>" href="/admin">관리자</a>
+        <% } %>
+      </nav>
+      <div class="nav-actions">
+        <button id="dark-mode-button" type="button" class="ghost-button theme-toggle">다크모드</button>
+        <div class="session-badge"><%= currentUser.username %></div>
+        <form action="/logout" method="post" class="logout-form">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <button type="submit" class="ghost-button">로그아웃</button>
+        </form>
+      </div>
+    <% } else { %>
+      <div class="nav-actions auth-nav-actions">
+        <button id="dark-mode-button" type="button" class="ghost-button theme-toggle">다크모드</button>
+        <a class="<%= path === '/login' ? 'active' : '' %>" href="/login">로그인</a>
+        <a class="<%= path === '/register' ? 'active' : '' %>" href="/register">회원가입</a>
+      </div>
+    <% } %>
+  </div>
 </header>
