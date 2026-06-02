@@ -93,6 +93,20 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_translation_cache_updated ON translation_cache(updated_at DESC);
 
+  CREATE TABLE IF NOT EXISTS example_cache (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    term_key TEXT NOT NULL UNIQUE,
+    term TEXT NOT NULL,
+    examples_json TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    hit_count INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_used_at TEXT
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_example_cache_updated ON example_cache(updated_at DESC);
+
   CREATE TABLE IF NOT EXISTS meaning_cache (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     item_type TEXT NOT NULL CHECK (item_type IN ('word', 'kanji')),

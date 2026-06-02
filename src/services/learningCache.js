@@ -1,11 +1,14 @@
 const { db, nowIso } = require('../db');
 
 const TRUSTED_TRANSLATION_PROVIDERS = new Set(['openai', 'libretranslate', 'local-exact']);
+const TRUSTED_EXAMPLE_PROVIDERS = new Set(['openai', 'local-template']);
 const MAX_MEANING_ITEMS = 4;
+const MAX_EXAMPLE_ITEMS = 3;
 const ANALYSIS_CACHE_VERSION = 'analysis-v2';
 const CACHE_LIMITS = {
   analysis_cache: 5000,
   translation_cache: 20000,
+  example_cache: 10000,
   meaning_cache: 60000
 };
 
@@ -39,6 +42,25 @@ function cleanMeanings(value, limit = MAX_MEANING_ITEMS) {
     .map((item) => normalizeText(item).replace(/[.。]+$/g, ''))
     .filter((item) => item && item !== '뜻 보강 필요');
   return Array.from(new Set(meanings)).slice(0, limit);
+}
+
+function cleanExamples(examples, limit = MAX_EXAMPLE_ITEMS) {
+  if (!Array.isArray(examples)) {
+    return [];
+  }
+  const cleaned = [];
+  for (const example of examples) {
+    const japanese = normalizeText(example?.japanese || example);
+    const korean = normalizeText(example?.korean);
+    if (!japanese) {
+      continue;
+    }
+    cleaned.push({ japanese: japanese.slice(0, 240), korean: korean.slice(0, 240) });
+    if (cleaned.length >= limit) {
+      break;
+    }
+  }
+  return cleaned;
 }
 
 function translationCacheHit(row) {
@@ -90,6 +112,67 @@ function saveTranslationCache(direction, sourceText, translation) {
       provider = excluded.provider,
       updated_at = excluded.updated_at
   `).run(direction, source, text, provider, timestamp, timestamp);
+  });
+}
+
+function exampleCacheHit(row, requestedTerm) {
+  if (!row) {
+    return null;
+  }
+  return safely(null, () => {
+    db.prepare(`
+      UPDATE example_cache
+      SET hit_count = hit_count + 1, last_used_at = ?
+      WHERE id = ?
+    `).run(nowIso(), row.id);
+    const examples = cleanExamples(JSON.parse(row.examples_json));
+    if (!examples.length) {
+      return null;
+    }
+    return {
+      term: normalizeText(requestedTerm) || row.term,
+      examples,
+      provider: 'cache',
+      note: '저장된 예문을 재사용했습니다.'
+    };
+  });
+}
+
+function getCachedExamples(term) {
+  const termKey = cacheKeyText(term);
+  if (!termKey) {
+    return null;
+  }
+  return safely(null, () => {
+    const row = db.prepare(`
+      SELECT id, term, examples_json
+      FROM example_cache
+      WHERE term_key = ?
+    `).get(termKey);
+    return exampleCacheHit(row, term);
+  });
+}
+
+function saveExampleCache(term, result) {
+  const normalizedTerm = normalizeText(term).slice(0, 80);
+  const termKey = cacheKeyText(normalizedTerm);
+  const examples = cleanExamples(result?.examples);
+  const provider = normalizeText(result?.provider);
+  if (!normalizedTerm || !termKey || !examples.length || !TRUSTED_EXAMPLE_PROVIDERS.has(provider)) {
+    return;
+  }
+
+  safely(undefined, () => {
+    const timestamp = nowIso();
+    db.prepare(`
+      INSERT INTO example_cache (term_key, term, examples_json, provider, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(term_key) DO UPDATE SET
+        term = excluded.term,
+        examples_json = excluded.examples_json,
+        provider = excluded.provider,
+        updated_at = excluded.updated_at
+    `).run(termKey, normalizedTerm, JSON.stringify(examples), provider, timestamp, timestamp);
   });
 }
 
@@ -317,6 +400,8 @@ module.exports = {
   saveAnalysisCache,
   getCachedTranslation,
   saveTranslationCache,
+  getCachedExamples,
+  saveExampleCache,
   getCachedWordMeanings,
   saveWordMeaning,
   getCachedKanjiMeanings,

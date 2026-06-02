@@ -14,6 +14,8 @@ const {
   saveAnalysisCache,
   getCachedTranslation,
   saveTranslationCache,
+  getCachedExamples,
+  saveExampleCache,
   getCachedWordMeanings,
   saveWordMeaning,
   getCachedKanjiMeanings,
@@ -795,6 +797,11 @@ async function generateExamples(term) {
     throw new Error('예문을 만들 단어를 입력해 주세요.');
   }
 
+  const cached = getCachedExamples(value);
+  if (cached) {
+    return cached;
+  }
+
   const openai = await callOpenAI({
     instructions: '일본어 학습자를 위해 입력 단어를 사용한 짧은 일본어 예문 3개와 한국어 번역을 JSON 배열로만 출력한다. 각 항목은 japanese, korean 키를 가진다.',
     input: value,
@@ -805,18 +812,39 @@ async function generateExamples(term) {
     try {
       const parsed = parseJsonArrayText(openai);
       if (Array.isArray(parsed)) {
-        return parsed.slice(0, 3);
+        const result = {
+          term: value,
+          examples: parsed.slice(0, 3),
+          provider: 'openai',
+          note: 'OpenAI 예문을 사용했습니다.'
+        };
+        saveExampleCache(value, result);
+        return result;
       }
     } catch (error) {
-      return openai.split('\n').filter(Boolean).slice(0, 3).map((line) => ({ japanese: line, korean: '' }));
+      const result = {
+        term: value,
+        examples: openai.split('\n').filter(Boolean).slice(0, 3).map((line) => ({ japanese: line, korean: '' })),
+        provider: 'openai',
+        note: 'OpenAI 예문을 사용했습니다.'
+      };
+      saveExampleCache(value, result);
+      return result;
     }
   }
 
-  return [
-    { japanese: `${value}を勉強します。`, korean: `${value}을/를 공부합니다.` },
-    { japanese: `${value}は大切です。`, korean: `${value}은/는 중요합니다.` },
-    { japanese: `今日は${value}を使います。`, korean: `오늘은 ${value}을/를 사용합니다.` }
-  ];
+  const result = {
+    term: value,
+    examples: [
+      { japanese: `${value}を勉強します。`, korean: `${value}을/를 공부합니다.` },
+      { japanese: `${value}は大切です。`, korean: `${value}은/는 중요합니다.` },
+      { japanese: `今日は${value}を使います。`, korean: `오늘은 ${value}을/를 사용합니다.` }
+    ],
+    provider: 'local-template',
+    note: '로컬 예문 틀로 생성했습니다.'
+  };
+  saveExampleCache(value, result);
+  return result;
 }
 
 async function ocrImage(dataUrl) {

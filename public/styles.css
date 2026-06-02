@@ -450,6 +450,68 @@ textarea:focus {
   color: var(--muted);
 }
 
+.provider-badge,
+.mini-status,
+.security-event-pill {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+
+.provider-cache,
+.security-event-login_success,
+.security-event-account_created {
+  border-color: #b8e6cc;
+  background: #e4f7ec;
+  color: var(--green);
+}
+
+.provider-local {
+  border-color: #b9e2dc;
+  background: #e7f5f2;
+  color: var(--teal-dark);
+}
+
+.provider-ai,
+.security-event-user_status_changed,
+.security-event-user_role_changed {
+  border-color: #f8d49a;
+  background: #fff7e8;
+  color: #9a5b05;
+}
+
+.provider-external {
+  border-color: #bfd3ff;
+  background: #eaf1ff;
+  color: var(--blue);
+}
+
+.provider-error,
+.security-event-login_failed,
+.security-event-login_inactive,
+.security-event-security_blocked,
+.security-event-admin_denied {
+  border-color: #fecaca;
+  background: #fff1f2;
+  color: var(--red);
+}
+
+.provider-loading,
+.provider-idle,
+.security-event-logout {
+  border-color: var(--line);
+  background: var(--surface-quiet);
+  color: var(--muted);
+}
+
 .furigana-box {
   padding: 18px 22px 22px;
   border-top: 1px solid var(--line);
@@ -538,6 +600,11 @@ td {
   font-weight: 800;
 }
 
+.meaning-missing {
+  color: var(--amber);
+  font-weight: 800;
+}
+
 .tool-body {
   display: grid;
   gap: 14px;
@@ -623,6 +690,10 @@ td {
 .quiz-box {
   display: grid;
   gap: 8px;
+}
+
+.mini-status {
+  margin-bottom: 2px;
 }
 
 .mini-item,

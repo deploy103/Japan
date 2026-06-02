@@ -24,6 +24,7 @@
 - 운영 환경은 HTTPS `APP_ORIGIN`과 `COOKIE_SECURE=true`가 아니면 시작되지 않습니다.
 - Helmet CSP, frame 차단, object 차단, no-store 캐시 정책을 적용했습니다.
 - 로그인/회원가입, 전체 요청, OpenAI 비용 발생 API에 별도 rate limit을 적용했습니다.
+- 로그인, 계정 생성, 관리자 접근 거부, 계정 상태/권한 변경은 관리자 페이지의 보안 이벤트 로그에 남깁니다.
 - API 오류는 HTML 리다이렉트 대신 JSON 오류로 반환해 화면에서 원인을 표시합니다.
 - `.env`, SQLite DB, 백업 파일은 `.gitignore`로 제외합니다.
 
@@ -76,6 +77,7 @@ OpenAI 키가 있으면 번역, 한국어 → 일본어 번역, 예문 생성, O
 
 - `analysis_cache`: 같은 일본어 문장 전체 분석 결과를 재사용
 - `translation_cache`: 일본어 → 한국어, 한국어 → 일본어 문장 번역 재사용
+- `example_cache`: 예문 생성 결과 재사용
 - `meaning_cache`: 단어 뜻, 한자 뜻, 한자 예시 단어 뜻 재사용
 - 기존 `search_history`, `vocabulary`에 저장된 번역과 뜻은 서버 시작 시 캐시로 편입
 - 캐시 히트 응답은 `X-Learning-Cache` 헤더를 포함하고 AI rate limit을 우회

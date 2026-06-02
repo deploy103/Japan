@@ -50,9 +50,48 @@ const FAVORITE_TYPE_KO = {
   kanji: '한자',
   sentence: '문장'
 };
+const PROVIDER_LABELS = {
+  cache: '서버 저장값',
+  'local-exact': '로컬 예문',
+  'local-gloss': '로컬 단어',
+  openai: 'AI 사용',
+  libretranslate: '외부 번역',
+  'local-unavailable': '번역 불가',
+  idle: '대기 중',
+  loading: '분석 중',
+  error: '오류'
+};
 
 function setText(element, text) {
   element.textContent = text;
+}
+
+function providerClass(provider, cacheHeader = '') {
+  if (cacheHeader || provider === 'cache') {
+    return 'provider-cache';
+  }
+  if (provider === 'openai') {
+    return 'provider-ai';
+  }
+  if (provider === 'libretranslate') {
+    return 'provider-external';
+  }
+  if (provider === 'error' || provider === 'local-unavailable') {
+    return 'provider-error';
+  }
+  if (provider === 'loading') {
+    return 'provider-loading';
+  }
+  if (provider?.startsWith('local-')) {
+    return 'provider-local';
+  }
+  return 'provider-idle';
+}
+
+function setProviderStatus(note, provider = 'idle', cacheHeader = '') {
+  providerNote.className = `provider-badge ${providerClass(provider, cacheHeader)}`;
+  providerNote.textContent = PROVIDER_LABELS[cacheHeader ? 'cache' : provider] || note || '대기 중';
+  providerNote.title = note || '';
 }
 
 function setLoading(isLoading) {
@@ -68,7 +107,7 @@ function updateCount() {
 function resetResults() {
   translationOutput.classList.add('placeholder');
   setText(translationOutput, '분석 결과가 여기에 표시됩니다.');
-  setText(providerNote, '대기 중');
+  setProviderStatus('대기 중', 'idle');
   furiganaOutput.replaceChildren();
   wordOutput.replaceChildren(emptyRow('아직 분석된 단어가 없습니다.'));
   kanjiList.replaceChildren(emptyChip('한자가 추출되면 여기에 표시됩니다.'));
@@ -129,11 +168,22 @@ function renderWords(words) {
 
   for (const word of words) {
     const row = document.createElement('tr');
-    for (const value of [word.surface, word.reading || '-', word.meaning || '뜻 보강 필요', word.jlpt || '-', word.posKo, word.base || '-']) {
+    const values = [
+      word.surface,
+      word.reading || '-',
+      word.meaning || '뜻 보강 필요',
+      word.jlpt || '-',
+      word.posKo,
+      word.base || '-'
+    ];
+    values.forEach((value, index) => {
       const cell = document.createElement('td');
       cell.textContent = value;
+      if (index === 2 && !word.meaning) {
+        cell.className = 'meaning-missing';
+      }
       row.append(cell);
-    }
+    });
     const actionCell = document.createElement('td');
     const saveButton = document.createElement('button');
     saveButton.type = 'button';
@@ -307,11 +357,11 @@ function renderGrammar(data) {
   }
 }
 
-function renderResult(data) {
+function renderResult(data, cacheHeader = '') {
   lastResult = data;
   translationOutput.classList.remove('placeholder');
   setText(translationOutput, data.translation.text);
-  setText(providerNote, data.translation.note);
+  setProviderStatus(data.translation.note, data.translation.provider, cacheHeader);
   renderFurigana(data.furigana);
   renderWords(data.words);
   renderKanjiList(data.kanji);
@@ -319,7 +369,7 @@ function renderResult(data) {
   refreshDashboard();
 }
 
-async function apiPost(url, body) {
+async function apiPostWithMeta(url, body) {
   const response = await fetch(url, {
     method: 'POST',
     headers: {
@@ -332,7 +382,14 @@ async function apiPost(url, body) {
   if (!response.ok) {
     throw new Error(data.error || '요청을 처리하지 못했습니다.');
   }
-  return data;
+  return {
+    data,
+    cacheHeader: response.headers.get('x-learning-cache') || ''
+  };
+}
+
+async function apiPost(url, body) {
+  return (await apiPostWithMeta(url, body)).data;
 }
 
 async function apiDelete(url) {
@@ -520,7 +577,7 @@ async function analyze(saveHistory = true) {
   }
 
   setLoading(true);
-  setText(providerNote, '분석 중');
+  setProviderStatus('분석 중', 'loading');
   try {
     const response = await fetch('/api/analyze', {
       method: 'POST',
@@ -534,11 +591,11 @@ async function analyze(saveHistory = true) {
     if (!response.ok) {
       throw new Error(data.error || '분석에 실패했습니다.');
     }
-    renderResult(data);
+    renderResult(data, response.headers.get('x-learning-cache') || '');
   } catch (error) {
     translationOutput.classList.add('placeholder');
     setText(translationOutput, error.message);
-    setText(providerNote, '오류');
+    setProviderStatus('오류', 'error');
   } finally {
     setLoading(false);
   }
@@ -737,8 +794,13 @@ exampleButton.addEventListener('click', async () => {
   }
   exampleOutput.replaceChildren(emptyText('예문 생성 중'));
   try {
-    const data = await apiPost('/api/examples', { term });
+    const { data, cacheHeader } = await apiPostWithMeta('/api/examples', { term });
     exampleOutput.replaceChildren();
+    const status = document.createElement('div');
+    status.className = `mini-status ${providerClass(data.provider, cacheHeader)}`;
+    status.textContent = PROVIDER_LABELS[cacheHeader ? 'cache' : data.provider] || data.note || '예문';
+    status.title = data.note || '';
+    exampleOutput.append(status);
     for (const example of data.examples) {
       const row = document.createElement('div');
       row.className = 'mini-item';

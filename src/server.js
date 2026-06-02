@@ -43,7 +43,10 @@ const SECURITY_EVENT_LABELS = {
   login_failed: '로그인 실패',
   login_inactive: '비활성 계정 접근',
   logout: '로그아웃',
-  security_blocked: '보안 차단'
+  security_blocked: '보안 차단',
+  admin_denied: '관리자 접근 거부',
+  user_status_changed: '계정 상태 변경',
+  user_role_changed: '계정 권한 변경'
 };
 
 const app = express();
@@ -185,6 +188,7 @@ function logSecurityEvent(req, eventType, { username = '', userId = null, detail
 function createSession(res, req, userId) {
   const token = randomToken(48);
   const now = Date.now();
+  const ipHash = req.ip ? sha256(`ip:${req.ip}`) : '';
   db.prepare(`
     INSERT INTO sessions (id_hash, user_id, csrf_token, user_agent, ip_address, created_at, last_seen_at, expires_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -193,7 +197,7 @@ function createSession(res, req, userId) {
     userId,
     randomToken(32),
     String(req.get('user-agent') || '').slice(0, 400),
-    req.ip,
+    ipHash,
     now,
     now,
     now + SESSION_TTL_MS
@@ -402,6 +406,11 @@ function requireAdmin(req, res, next) {
     return;
   }
   if (req.user.role !== 'admin') {
+    logSecurityEvent(req, 'admin_denied', {
+      username: req.user.username,
+      userId: req.user.id,
+      detail: `${req.method} ${req.path}`
+    });
     res.status(403).render('error', {
       title: '접근 불가',
       message: '관리자만 접근할 수 있는 페이지입니다.'
@@ -594,6 +603,7 @@ function getCacheStats() {
   return [
     { label: '전체 분석', ...cacheSummary('analysis_cache') },
     { label: '문장 번역', ...cacheSummary('translation_cache') },
+    { label: '예문 생성', ...cacheSummary('example_cache') },
     { label: '단어 뜻', ...cacheSummary('meaning_cache', "WHERE item_type = 'word'") },
     { label: '한자 뜻', ...cacheSummary('meaning_cache', "WHERE item_type = 'kanji'") }
   ];
@@ -893,7 +903,11 @@ app.delete('/api/favorites/:id', requireAuth, (req, res) => {
 
 app.post('/api/examples', requireAuth, aiCostLimiter, async (req, res, next) => {
   try {
-    res.json({ examples: await generateExamples(req.body.term) });
+    const result = await generateExamples(req.body.term);
+    if (result.provider === 'cache') {
+      res.set('X-Learning-Cache', 'examples-hit');
+    }
+    res.json(result);
   } catch (error) {
     next(error);
   }
@@ -1003,13 +1017,18 @@ app.post('/admin/users/:id/status', requireAdmin, (req, res) => {
     return;
   }
 
-  const user = db.prepare('SELECT id, is_active FROM users WHERE id = ?').get(targetId);
+  const user = db.prepare('SELECT id, username, is_active FROM users WHERE id = ?').get(targetId);
   if (user) {
     const nextStatus = user.is_active === 1 ? 0 : 1;
     db.prepare('UPDATE users SET is_active = ?, updated_at = ? WHERE id = ?').run(nextStatus, nowIso(), targetId);
     if (nextStatus === 0) {
       db.prepare('DELETE FROM sessions WHERE user_id = ?').run(targetId);
     }
+    logSecurityEvent(req, 'user_status_changed', {
+      username: req.user.username,
+      userId: req.user.id,
+      detail: `${user.username}: ${nextStatus === 1 ? 'activated' : 'disabled'}`
+    });
   }
   res.redirect('/admin');
 });
@@ -1024,10 +1043,15 @@ app.post('/admin/users/:id/role', requireAdmin, (req, res) => {
     return;
   }
 
-  const user = db.prepare('SELECT id, role FROM users WHERE id = ?').get(targetId);
+  const user = db.prepare('SELECT id, username, role FROM users WHERE id = ?').get(targetId);
   if (user) {
     const nextRole = user.role === 'admin' ? 'user' : 'admin';
     db.prepare('UPDATE users SET role = ?, updated_at = ? WHERE id = ?').run(nextRole, nowIso(), targetId);
+    logSecurityEvent(req, 'user_role_changed', {
+      username: req.user.username,
+      userId: req.user.id,
+      detail: `${user.username}: ${user.role} -> ${nextRole}`
+    });
   }
   res.redirect('/admin');
 });

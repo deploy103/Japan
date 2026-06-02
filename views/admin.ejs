@@ -57,7 +57,7 @@
             <% } else { %>
               <% securityEvents.forEach((event) => { %>
                 <tr>
-                  <td><strong><%= event.label %></strong></td>
+                  <td><span class="security-event-pill security-event-<%= event.event_type %>"><%= event.label %></span></td>
                   <td><%= event.username || '-' %></td>
                   <td><%= event.ip_hash_short || '-' %></td>
                   <td><%= event.detail || '-' %></td>

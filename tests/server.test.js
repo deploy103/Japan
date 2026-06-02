@@ -190,6 +190,54 @@ test('server auth and learning API flow works', { timeout: 30000 }, async () => 
     const koJa = await response.json();
     assert.equal(koJa.translation.text, '私は日本語を勉強しています。');
 
+    response = await fetch(`http://localhost:${port}/api/translate-ko-ja`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-csrf-token': csrf,
+        cookie: cookieHeader(cookies),
+        origin: `http://localhost:${port}`
+      },
+      body: JSON.stringify({
+        text: '나는 일본어를 공부하고 있습니다.',
+        saveHistory: false
+      })
+    });
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('x-learning-cache'), 'translation-hit');
+    const cachedKoJa = await response.json();
+    assert.equal(cachedKoJa.translation.provider, 'cache');
+
+    response = await fetch(`http://localhost:${port}/api/examples`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-csrf-token': csrf,
+        cookie: cookieHeader(cookies),
+        origin: `http://localhost:${port}`
+      },
+      body: JSON.stringify({ term: '図書館' })
+    });
+    assert.equal(response.status, 200);
+    const examples = await response.json();
+    assert.equal(examples.provider, 'local-template');
+    assert.equal(examples.examples.length, 3);
+
+    response = await fetch(`http://localhost:${port}/api/examples`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-csrf-token': csrf,
+        cookie: cookieHeader(cookies),
+        origin: `http://localhost:${port}`
+      },
+      body: JSON.stringify({ term: '図書館' })
+    });
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('x-learning-cache'), 'examples-hit');
+    const cachedExamples = await response.json();
+    assert.equal(cachedExamples.provider, 'cache');
+
     response = await fetch(`http://localhost:${port}/api/vocabulary`, {
       method: 'POST',
       headers: {

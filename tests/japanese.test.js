@@ -13,7 +13,8 @@ const {
   extractKanji,
   getKanjiDetail,
   convertKana,
-  translateKoreanToJapanese
+  translateKoreanToJapanese,
+  generateExamples
 } = require('../src/services/japanese');
 const {
   saveTranslationCache,
@@ -88,4 +89,14 @@ test('complete local analysis is cached as a full result', async () => {
   const second = await analyzeJapanese('こんにちは。');
   assert.equal(second.translation.provider, 'cache');
   assert.equal(second.words.find((word) => word.surface === 'こんにちは').meaning, '안녕하세요');
+});
+
+test('example generation is cached after first local result', async () => {
+  const first = await generateExamples('図書館');
+  assert.equal(first.provider, 'local-template');
+  assert.equal(first.examples.length, 3);
+
+  const second = await generateExamples('図書館');
+  assert.equal(second.provider, 'cache');
+  assert.equal(second.examples[0].japanese, first.examples[0].japanese);
 });
