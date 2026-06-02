@@ -10,6 +10,8 @@ const {
   katakanaMeaningKo
 } = require('./koDictionary');
 const {
+  getCachedAnalysis,
+  saveAnalysisCache,
   getCachedTranslation,
   saveTranslationCache,
   getCachedWordMeanings,
@@ -342,6 +344,23 @@ function needsMeaningForLocalTranslation(token) {
 function canTranslateFromTokenMeanings(tokens) {
   const contentTokens = tokens.filter(needsMeaningForLocalTranslation);
   return contentTokens.length > 0 && contentTokens.every((token) => Boolean(token.meaning));
+}
+
+function hasMissingTokenMeanings(tokens) {
+  return tokens.some((token) => needsMeaningForLocalTranslation(token) && !token.meaning);
+}
+
+function hasMissingKanjiMeanings(kanjiDetails) {
+  return kanjiDetails.some((detail) => (
+    !hasUsefulMeanings(detail.meaningsKo) ||
+    detail.examples.some((example) => !hasUsefulMeanings(example.meanings))
+  ));
+}
+
+function isCacheableAnalysis(result) {
+  return Boolean(result?.translation?.text)
+    && !hasMissingTokenMeanings(result.words || [])
+    && !hasMissingKanjiMeanings(result.kanji || []);
 }
 
 function applyCachedWordMeanings(tokens) {
@@ -832,6 +851,11 @@ async function analyzeJapanese(text) {
     throw new Error(`문장은 ${MAX_TEXT_LENGTH}자 이하로 입력해 주세요.`);
   }
 
+  const cachedAnalysis = getCachedAnalysis(input);
+  if (cachedAnalysis) {
+    return cachedAnalysis;
+  }
+
   const tokenizer = await getTokenizer();
   let tokens = applyCachedWordMeanings(tokenizer.tokenize(input).map(simplifyToken));
   const kanji = extractKanji(input).slice(0, 80);
@@ -869,7 +893,7 @@ async function analyzeJapanese(text) {
     }
   }
 
-  return {
+  const result = {
     source: input,
     translation,
     furigana: buildFurigana(tokens),
@@ -881,6 +905,10 @@ async function analyzeJapanese(text) {
     difficulty,
     kana: convertKana(input)
   };
+  if (isCacheableAnalysis(result)) {
+    saveAnalysisCache(input, result);
+  }
+  return result;
 }
 
 module.exports = {

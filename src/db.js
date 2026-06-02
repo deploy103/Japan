@@ -49,6 +49,21 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_history_user_created ON search_history(user_id, created_at DESC);
 
+  CREATE TABLE IF NOT EXISTS analysis_cache (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_key TEXT NOT NULL UNIQUE,
+    source_text TEXT NOT NULL,
+    result_json TEXT NOT NULL,
+    version TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    hit_count INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_used_at TEXT
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_analysis_cache_updated ON analysis_cache(updated_at DESC);
+
   CREATE TABLE IF NOT EXISTS translation_cache (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     direction TEXT NOT NULL CHECK (direction IN ('ja-ko', 'ko-ja')),

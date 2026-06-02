@@ -80,3 +80,12 @@ test('analysis reuses cached translation and meanings before OpenAI', async () =
   assert.equal(result.words.find((word) => word.surface === '渡る').meaning, '건너다');
   assert.equal(result.kanji.find((item) => item.char === '橋').meaningsKo.includes('다리'), true);
 });
+
+test('complete local analysis is cached as a full result', async () => {
+  const first = await analyzeJapanese('こんにちは。');
+  assert.notEqual(first.translation.provider, 'cache');
+
+  const second = await analyzeJapanese('こんにちは。');
+  assert.equal(second.translation.provider, 'cache');
+  assert.equal(second.words.find((word) => word.surface === 'こんにちは').meaning, '안녕하세요');
+});

@@ -2,13 +2,28 @@ const { db, nowIso } = require('../db');
 
 const TRUSTED_TRANSLATION_PROVIDERS = new Set(['openai', 'libretranslate', 'local-exact']);
 const MAX_MEANING_ITEMS = 4;
+const ANALYSIS_CACHE_VERSION = 'analysis-v2';
 
 function normalizeText(value) {
   return String(value || '').trim();
 }
 
+function cacheKeyText(value) {
+  return normalizeText(value)
+    .normalize('NFKC')
+    .replace(/\s+/g, ' ');
+}
+
 function normalizePos(pos) {
   return normalizeText(pos).toLowerCase();
+}
+
+function safely(fallback, callback) {
+  try {
+    return callback();
+  } catch (error) {
+    return fallback;
+  }
 }
 
 function cleanMeanings(value, limit = MAX_MEANING_ITEMS) {
@@ -38,28 +53,31 @@ function translationCacheHit(row) {
 }
 
 function getCachedTranslation(direction, sourceText) {
-  const source = normalizeText(sourceText);
+  const source = cacheKeyText(sourceText);
   if (!source) {
     return null;
   }
-  const row = db.prepare(`
+  return safely(null, () => {
+    const row = db.prepare(`
     SELECT id, translation_text, provider
     FROM translation_cache
     WHERE direction = ? AND source_text = ?
   `).get(direction, source);
-  return translationCacheHit(row);
+    return translationCacheHit(row);
+  });
 }
 
 function saveTranslationCache(direction, sourceText, translation) {
-  const source = normalizeText(sourceText);
+  const source = cacheKeyText(sourceText);
   const text = normalizeText(translation?.text);
   const provider = normalizeText(translation?.provider);
   if (!source || !text || !TRUSTED_TRANSLATION_PROVIDERS.has(provider)) {
     return;
   }
 
-  const timestamp = nowIso();
-  db.prepare(`
+  safely(undefined, () => {
+    const timestamp = nowIso();
+    db.prepare(`
     INSERT INTO translation_cache (direction, source_text, translation_text, provider, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?, ?)
     ON CONFLICT(direction, source_text) DO UPDATE SET
@@ -67,6 +85,7 @@ function saveTranslationCache(direction, sourceText, translation) {
       provider = excluded.provider,
       updated_at = excluded.updated_at
   `).run(direction, source, text, provider, timestamp, timestamp);
+  });
 }
 
 function meaningCacheHit(row) {
@@ -110,12 +129,14 @@ function kanjiCacheKey(char) {
 function getCachedMeaning(itemType, keys) {
   const uniqueKeys = Array.from(new Set(keys.filter(Boolean)));
   for (const key of uniqueKeys) {
-    const row = db.prepare(`
+    const meanings = safely([], () => {
+      const row = db.prepare(`
       SELECT id, meanings_json
       FROM meaning_cache
       WHERE item_type = ? AND cache_key = ?
     `).get(itemType, key);
-    const meanings = meaningCacheHit(row);
+      return meaningCacheHit(row);
+    });
     if (meanings.length) {
       return meanings;
     }
@@ -131,8 +152,9 @@ function saveMeaning(itemType, cacheKey, term, meanings, { reading = '', pos = '
     return;
   }
 
-  const timestamp = nowIso();
-  db.prepare(`
+  safely(undefined, () => {
+    const timestamp = nowIso();
+    db.prepare(`
     INSERT INTO meaning_cache (item_type, cache_key, term, reading, pos, meanings_json, source, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(cache_key) DO UPDATE SET
@@ -153,6 +175,7 @@ function saveMeaning(itemType, cacheKey, term, meanings, { reading = '', pos = '
     timestamp,
     timestamp
   );
+  });
 }
 
 function getCachedWordMeanings(token) {
@@ -194,8 +217,79 @@ function saveKanjiMeaning(char, meanings, source = 'openai') {
   saveMeaning('kanji', kanjiCacheKey(value), value, cleanMeanings(meanings), { source });
 }
 
+function analysisCacheHit(row, requestedSource) {
+  if (!row) {
+    return null;
+  }
+  return safely(null, () => {
+    db.prepare(`
+      UPDATE analysis_cache
+      SET hit_count = hit_count + 1, last_used_at = ?
+      WHERE id = ?
+    `).run(nowIso(), row.id);
+    const result = JSON.parse(row.result_json);
+    return {
+      ...result,
+      source: normalizeText(requestedSource) || result.source,
+      translation: {
+        ...result.translation,
+        provider: 'cache',
+        note: '저장된 분석 결과를 재사용했습니다.'
+      }
+    };
+  });
+}
+
+function getCachedAnalysis(sourceText) {
+  const sourceKey = cacheKeyText(sourceText);
+  if (!sourceKey) {
+    return null;
+  }
+  return safely(null, () => {
+    const row = db.prepare(`
+      SELECT id, result_json
+      FROM analysis_cache
+      WHERE source_key = ? AND version = ?
+    `).get(sourceKey, ANALYSIS_CACHE_VERSION);
+    return analysisCacheHit(row, sourceText);
+  });
+}
+
+function saveAnalysisCache(sourceText, result) {
+  const source = normalizeText(sourceText);
+  const sourceKey = cacheKeyText(sourceText);
+  const translationText = normalizeText(result?.translation?.text);
+  if (!source || !sourceKey || !translationText || !result?.words || !result?.kanji) {
+    return;
+  }
+
+  safely(undefined, () => {
+    const timestamp = nowIso();
+    db.prepare(`
+      INSERT INTO analysis_cache (source_key, source_text, result_json, version, provider, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(source_key) DO UPDATE SET
+        source_text = excluded.source_text,
+        result_json = excluded.result_json,
+        version = excluded.version,
+        provider = excluded.provider,
+        updated_at = excluded.updated_at
+    `).run(
+      sourceKey,
+      source,
+      JSON.stringify(result),
+      ANALYSIS_CACHE_VERSION,
+      normalizeText(result.translation?.provider) || 'unknown',
+      timestamp,
+      timestamp
+    );
+  });
+}
+
 module.exports = {
   cleanMeanings,
+  getCachedAnalysis,
+  saveAnalysisCache,
   getCachedTranslation,
   saveTranslationCache,
   getCachedWordMeanings,
