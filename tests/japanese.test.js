@@ -100,3 +100,12 @@ test('example generation is cached after first local result', async () => {
   assert.equal(second.provider, 'cache');
   assert.equal(second.examples[0].japanese, first.examples[0].japanese);
 });
+
+test('common everyday words resolve from the local Korean dictionary', async () => {
+  const result = await analyzeJapanese('銀行でお金を下ろします。駅で電車を待ちます。週末に友達と映画を見ます。');
+  const missing = result.words
+    .filter((word) => word.pos !== '記号')
+    .filter((word) => !word.meaning)
+    .map((word) => word.surface);
+  assert.deepEqual(missing, []);
+});

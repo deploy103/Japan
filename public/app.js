@@ -168,10 +168,11 @@ function renderWords(words) {
 
   for (const word of words) {
     const row = document.createElement('tr');
+    const isSymbol = word.pos === '記号' || word.posKo === '기호';
     const values = [
       word.surface,
       word.reading || '-',
-      word.meaning || '뜻 보강 필요',
+      word.meaning || (isSymbol ? '-' : '뜻 보강 필요'),
       word.jlpt || '-',
       word.posKo,
       word.base || '-'
@@ -179,7 +180,7 @@ function renderWords(words) {
     values.forEach((value, index) => {
       const cell = document.createElement('td');
       cell.textContent = value;
-      if (index === 2 && !word.meaning) {
+      if (index === 2 && !word.meaning && !isSymbol) {
         cell.className = 'meaning-missing';
       }
       row.append(cell);
