@@ -29,6 +29,7 @@ const MAX_AI_MEANING_ITEMS = 40;
 let tokenizerPromise;
 const analysisInFlight = new Map();
 const exampleInFlight = new Map();
+const kanjiDetailInFlight = new Map();
 const koJaTranslationInFlight = new Map();
 
 const POS_KO = {
@@ -612,6 +613,21 @@ async function enrichKanjiDetailsWithOpenAI(kanjiDetails) {
 }
 
 async function getKanjiDetailWithAi(char) {
+  const value = String(char || '').charAt(0);
+  const activeRequest = kanjiDetailInFlight.get(value);
+  if (activeRequest) {
+    return activeRequest;
+  }
+
+  const request = getKanjiDetailWithAiFresh(value)
+    .finally(() => {
+      kanjiDetailInFlight.delete(value);
+    });
+  kanjiDetailInFlight.set(value, request);
+  return request;
+}
+
+async function getKanjiDetailWithAiFresh(char) {
   const [detail] = await enrichKanjiDetailsWithOpenAI(applyCachedKanjiDetails([getKanjiDetail(char)]));
   return detail;
 }

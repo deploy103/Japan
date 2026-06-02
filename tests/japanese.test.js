@@ -12,6 +12,7 @@ const {
   analyzeJapanese,
   extractKanji,
   getKanjiDetail,
+  getKanjiDetailWithAi,
   convertKana,
   translateKoreanToJapanese,
   generateExamples
@@ -35,6 +36,14 @@ test('kanji details include readings and metadata', () => {
   assert.equal(detail.char, '学');
   assert.equal(detail.onReadings.includes('ガク'), true);
   assert.equal(detail.strokeCount > 0, true);
+});
+
+test('concurrent kanji detail requests share one in-flight result', async () => {
+  const [first, second] = await Promise.all([
+    getKanjiDetailWithAi('学'),
+    getKanjiDetailWithAi('学')
+  ]);
+  assert.deepEqual(second, first);
 });
 
 test('analysis returns translation, furigana, words, and kanji', async () => {
