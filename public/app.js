@@ -30,9 +30,14 @@ const particleOutput = document.querySelector('#particle-output');
 const katakanaOutput = document.querySelector('#katakana-output');
 const darkModeButton = document.querySelector('#dark-mode-button');
 
+const WORD_PAGE_SIZE = 20;
+const KANJI_PAGE_SIZE = 24;
+
 let lastKanji = [];
 let lastResult = null;
 let lastKoJaTranslation = '';
+let wordPage = 1;
+let kanjiPage = 1;
 const PROVIDER_LABELS = {
   cache: '서버 저장값',
   'local-exact': '로컬 예문',
@@ -99,7 +104,12 @@ function resetResults() {
   structureOutput.replaceChildren();
   particleOutput.replaceChildren(emptyChip('조사 설명이 여기에 표시됩니다.'));
   katakanaOutput.replaceChildren();
+  lastKanji = [];
   lastResult = null;
+  wordPage = 1;
+  kanjiPage = 1;
+  document.querySelector('#word-pagination')?.replaceChildren();
+  document.querySelector('#kanji-pagination')?.replaceChildren();
 }
 
 function emptyRow(message) {
@@ -126,6 +136,61 @@ function emptyText(message) {
   return text;
 }
 
+function getSectionFooter(anchor, id) {
+  const section = anchor.closest('.analysis-section');
+  if (!section) {
+    return null;
+  }
+  let footer = section.querySelector(`#${id}`);
+  if (!footer) {
+    footer = document.createElement('div');
+    footer.id = id;
+    footer.className = 'result-footer';
+    section.append(footer);
+  }
+  return footer;
+}
+
+function renderPager({ anchor, id, total, page, pageSize, onChange }) {
+  const footer = getSectionFooter(anchor, id);
+  if (!footer) {
+    return;
+  }
+
+  footer.replaceChildren();
+  if (total <= pageSize) {
+    return;
+  }
+
+  const pageCount = Math.ceil(total / pageSize);
+  const from = (page - 1) * pageSize + 1;
+  const to = Math.min(total, page * pageSize);
+
+  const count = document.createElement('span');
+  count.className = 'result-count';
+  count.textContent = `${from}-${to} / ${total}개`;
+
+  const previousButton = document.createElement('button');
+  previousButton.type = 'button';
+  previousButton.className = 'small-button';
+  previousButton.textContent = '이전';
+  previousButton.disabled = page <= 1;
+  previousButton.addEventListener('click', () => onChange(page - 1));
+
+  const label = document.createElement('span');
+  label.className = 'page-label';
+  label.textContent = `${page} / ${pageCount}`;
+
+  const nextButton = document.createElement('button');
+  nextButton.type = 'button';
+  nextButton.className = 'small-button';
+  nextButton.textContent = '다음';
+  nextButton.disabled = page >= pageCount;
+  nextButton.addEventListener('click', () => onChange(page + 1));
+
+  footer.append(count, previousButton, label, nextButton);
+}
+
 function renderFurigana(items) {
   furiganaOutput.replaceChildren();
   for (const item of items) {
@@ -146,10 +211,23 @@ function renderWords(words) {
   wordOutput.replaceChildren();
   if (!words.length) {
     wordOutput.append(emptyRow('분리된 단어가 없습니다.'));
+    renderPager({
+      anchor: wordOutput,
+      id: 'word-pagination',
+      total: 0,
+      page: 1,
+      pageSize: WORD_PAGE_SIZE,
+      onChange: () => {}
+    });
     return;
   }
 
-  for (const word of words) {
+  const pageCount = Math.ceil(words.length / WORD_PAGE_SIZE);
+  wordPage = Math.min(Math.max(wordPage, 1), pageCount);
+  const start = (wordPage - 1) * WORD_PAGE_SIZE;
+  const visibleWords = words.slice(start, start + WORD_PAGE_SIZE);
+
+  for (const word of visibleWords) {
     const row = document.createElement('tr');
     const isSymbol = word.pos === '記号' || word.posKo === '기호';
     const values = [
@@ -178,6 +256,18 @@ function renderWords(words) {
     row.append(actionCell);
     wordOutput.append(row);
   }
+
+  renderPager({
+    anchor: wordOutput,
+    id: 'word-pagination',
+    total: words.length,
+    page: wordPage,
+    pageSize: WORD_PAGE_SIZE,
+    onChange: (nextPage) => {
+      wordPage = nextPage;
+      renderWords(words);
+    }
+  });
 }
 
 function renderKanjiList(kanji) {
@@ -186,17 +276,30 @@ function renderKanjiList(kanji) {
   if (!kanji.length) {
     kanjiList.append(emptyChip('이 문장에는 추출된 한자가 없습니다.'));
     kanjiDetail.replaceChildren(emptyText('한자를 선택하면 뜻, 음독, 훈독, 예시 단어를 볼 수 있습니다.'));
+    renderPager({
+      anchor: kanjiList,
+      id: 'kanji-pagination',
+      total: 0,
+      page: 1,
+      pageSize: KANJI_PAGE_SIZE,
+      onChange: () => {}
+    });
     return;
   }
 
-  kanji.forEach((item, index) => {
+  const pageCount = Math.ceil(kanji.length / KANJI_PAGE_SIZE);
+  kanjiPage = Math.min(Math.max(kanjiPage, 1), pageCount);
+  const start = (kanjiPage - 1) * KANJI_PAGE_SIZE;
+  const visibleKanji = kanji.slice(start, start + KANJI_PAGE_SIZE);
+
+  visibleKanji.forEach((item, index) => {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'kanji-chip';
     button.textContent = item.char;
-    button.dataset.index = String(index);
+    button.dataset.index = String(start + index);
     button.addEventListener('click', () => {
-      document.querySelectorAll('.kanji-chip').forEach((chip) => chip.classList.remove('active'));
+      kanjiList.querySelectorAll('.kanji-chip').forEach((chip) => chip.classList.remove('active'));
       button.classList.add('active');
       renderKanjiDetail(item);
     });
@@ -205,7 +308,19 @@ function renderKanjiList(kanji) {
 
   const first = kanjiList.querySelector('.kanji-chip');
   first.classList.add('active');
-  renderKanjiDetail(kanji[0]);
+  renderKanjiDetail(visibleKanji[0]);
+
+  renderPager({
+    anchor: kanjiList,
+    id: 'kanji-pagination',
+    total: kanji.length,
+    page: kanjiPage,
+    pageSize: KANJI_PAGE_SIZE,
+    onChange: (nextPage) => {
+      kanjiPage = nextPage;
+      renderKanjiList(lastKanji);
+    }
+  });
 }
 
 function addDetailLine(parent, label, value) {
@@ -239,8 +354,8 @@ function renderKanjiDetail(item) {
   lines.className = 'detail-lines';
   const meaning = item.meaningsKo?.length ? item.meaningsKo.join(', ') : '뜻 보강 필요';
   addDetailLine(lines, '뜻', meaning);
-  addDetailLine(lines, '음독', item.onReadings.join(', '));
-  addDetailLine(lines, '훈독', item.kunReadings.join(', '));
+  addDetailLine(lines, '음독', (item.onReadings || []).join(', '));
+  addDetailLine(lines, '훈독', (item.kunReadings || []).join(', '));
   kanjiDetail.append(lines);
 
   const exampleTitle = document.createElement('h3');
@@ -252,29 +367,32 @@ function renderKanjiDetail(item) {
   favoriteButton.className = 'small-button';
   favoriteButton.textContent = '한자 즐겨찾기';
   favoriteButton.addEventListener('click', async () => {
+    favoriteButton.disabled = true;
+    favoriteButton.textContent = '저장 중';
     await apiPost('/api/favorites', {
       itemType: 'kanji',
       itemText: item.char,
       note: item.meaningsKo?.join(', ') || ''
     });
-    await refreshDashboard();
+    favoriteButton.textContent = '저장됨';
   });
   kanjiDetail.append(favoriteButton);
 
   const list = document.createElement('div');
   list.className = 'example-list';
-  if (!item.examples.length) {
+  if (!item.examples?.length) {
     list.append(emptyText('예시 단어가 없습니다.'));
   } else {
     for (const example of item.examples) {
+      const meaningList = Array.isArray(example.meanings) ? example.meanings.filter(Boolean) : [];
       const row = document.createElement('div');
       row.className = 'example-item';
       const written = document.createElement('strong');
-      written.textContent = example.written;
+      written.textContent = example.written || '-';
       const reading = document.createElement('span');
       reading.textContent = example.pronounced || '-';
       const meanings = document.createElement('small');
-      meanings.textContent = example.meanings.join(', ');
+      meanings.textContent = meaningList.length ? meaningList.join(', ') : '-';
       row.append(written, reading, meanings);
       list.append(row);
     }
@@ -343,6 +461,8 @@ function renderGrammar(data) {
 
 function renderResult(data, cacheHeader = '') {
   lastResult = data;
+  wordPage = 1;
+  kanjiPage = 1;
   translationOutput.classList.remove('placeholder');
   setText(translationOutput, data.translation.text);
   setProviderStatus(data.translation.note, data.translation.provider, cacheHeader);
@@ -567,8 +687,11 @@ kanjiSearchButton.addEventListener('click', async () => {
   }
   const response = await fetch(`/api/kanji/${encodeURIComponent(char)}`);
   const detail = await response.json();
+  lastKanji = [detail];
+  kanjiPage = 1;
   renderKanjiDetail(detail);
   kanjiList.replaceChildren();
+  document.querySelector('#kanji-pagination')?.replaceChildren();
   const chip = document.createElement('button');
   chip.type = 'button';
   chip.className = 'kanji-chip active';
