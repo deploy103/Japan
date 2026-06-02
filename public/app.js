@@ -28,8 +28,6 @@ const difficultyOutput = document.querySelector('#difficulty-output');
 const structureOutput = document.querySelector('#structure-output');
 const particleOutput = document.querySelector('#particle-output');
 const katakanaOutput = document.querySelector('#katakana-output');
-const darkModeButton = document.querySelector('#dark-mode-button');
-
 const WORD_PAGE_SIZE = 20;
 const KANJI_PAGE_SIZE = 24;
 
@@ -715,14 +713,5 @@ koJaUseButton.addEventListener('click', () => {
   updateCount();
   analyze(true);
 });
-
-darkModeButton.addEventListener('click', () => {
-  document.body.classList.toggle('dark-mode');
-  localStorage.setItem('dark-mode', document.body.classList.contains('dark-mode') ? '1' : '0');
-});
-
-if (localStorage.getItem('dark-mode') === '1') {
-  document.body.classList.add('dark-mode');
-}
 
 updateCount();

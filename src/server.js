@@ -58,8 +58,10 @@ const AI_OPERATION_LABELS = {
   ocr: 'OCR',
   unknown: '기타'
 };
+const ASSET_VERSION = process.env.ASSET_VERSION || String(Date.now());
 
 const app = express();
+app.locals.assetVersion = ASSET_VERSION;
 
 if (config.isProduction) {
   app.set('trust proxy', 1);

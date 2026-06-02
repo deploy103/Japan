@@ -1,6 +1,5 @@
 const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || '';
 
-const darkModeButton = document.querySelector('#dark-mode-button');
 const modeButtons = document.querySelectorAll('[data-mode]');
 const startButton = document.querySelector('#test-start-button');
 const submitButton = document.querySelector('#test-submit-button');
@@ -233,15 +232,6 @@ answerInput.addEventListener('keydown', (event) => {
     submitAnswer();
   }
 });
-
-darkModeButton.addEventListener('click', () => {
-  document.body.classList.toggle('dark-mode');
-  localStorage.setItem('dark-mode', document.body.classList.contains('dark-mode') ? '1' : '0');
-});
-
-if (localStorage.getItem('dark-mode') === '1') {
-  document.body.classList.add('dark-mode');
-}
 
 answerInput.disabled = true;
 submitButton.disabled = true;

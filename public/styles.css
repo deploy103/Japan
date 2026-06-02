@@ -32,6 +32,7 @@ body {
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
+html.dark-mode,
 body.dark-mode {
   --bg: #101417;
   --surface: #171d22;
@@ -41,8 +42,23 @@ body.dark-mode {
   --text: #eef4f7;
   --muted: #a7b4bf;
   --shadow: 0 10px 28px rgba(0, 0, 0, 0.22);
+  color-scheme: dark;
 }
 
+html.dark-mode .topbar,
+html.dark-mode .panel-toolbar,
+html.dark-mode .panel-actions,
+html.dark-mode .furigana-box,
+html.dark-mode .kanji-detail,
+html.dark-mode th,
+html.dark-mode .auth-copy,
+html.dark-mode .mini-item,
+html.dark-mode .history-item,
+html.dark-mode .ko-ja-tool .mini-result,
+html.dark-mode .test-card,
+html.dark-mode .mini-result,
+html.dark-mode .stat-row span,
+html.dark-mode .info-chip,
 body.dark-mode .topbar,
 body.dark-mode .panel-toolbar,
 body.dark-mode .panel-actions,
@@ -58,6 +74,17 @@ body.dark-mode .mini-result,
 body.dark-mode .stat-row span,
 body.dark-mode .info-chip {
   background: var(--surface-quiet);
+}
+
+html.dark-mode .auth-body,
+body.dark-mode.auth-body {
+  background: var(--bg);
+}
+
+html.dark-mode .nav-links a.active,
+body.dark-mode .nav-links a.active {
+  background: #123e3a;
+  color: #9ff2e4;
 }
 
 a {
@@ -938,6 +965,24 @@ td {
   color: var(--teal-dark);
 }
 
+html.dark-mode .kanji-chip,
+html.dark-mode .empty-chip,
+body.dark-mode .kanji-chip,
+body.dark-mode .empty-chip {
+  border-color: var(--line-strong);
+  background: #11181d;
+  color: #eef4f7;
+}
+
+html.dark-mode .kanji-chip:hover,
+html.dark-mode .kanji-chip.active,
+body.dark-mode .kanji-chip:hover,
+body.dark-mode .kanji-chip.active {
+  border-color: #62cfc1;
+  background: #123e3a;
+  color: #9ff2e4;
+}
+
 .empty-chip {
   width: 100%;
   justify-content: flex-start;
@@ -972,6 +1017,12 @@ td {
   color: #ffffff;
   font-size: 38px;
   font-weight: 900;
+}
+
+html.dark-mode .kanji-large,
+body.dark-mode .kanji-large {
+  background: #dff8f1;
+  color: #0b5e57;
 }
 
 .kanji-meta {

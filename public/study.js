@@ -12,7 +12,6 @@ const PROVIDER_LABELS = {
   'local-template': '로컬 예문'
 };
 
-const darkModeButton = document.querySelector('#dark-mode-button');
 const statsOutput = document.querySelector('#stats-output');
 const quizStartButton = document.querySelector('#quiz-start-button');
 const quizBox = document.querySelector('#quiz-box');
@@ -353,15 +352,6 @@ exampleTerm.addEventListener('keydown', (event) => {
     generateExample();
   }
 });
-
-darkModeButton.addEventListener('click', () => {
-  document.body.classList.toggle('dark-mode');
-  localStorage.setItem('dark-mode', document.body.classList.contains('dark-mode') ? '1' : '0');
-});
-
-if (localStorage.getItem('dark-mode') === '1') {
-  document.body.classList.add('dark-mode');
-}
 
 renderDashboard();
 refreshDashboard();
