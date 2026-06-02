@@ -28,6 +28,7 @@ const {
 const {
   getCachedAnalysis,
   getCachedTranslation,
+  getCachedExamples,
   pruneLearningCaches,
   saveWordMeaning
 } = require('./services/learningCache');
@@ -484,6 +485,16 @@ function serveCachedKoJaTranslation(req, res, next) {
   res.json(result);
 }
 
+function serveCachedExamples(req, res, next) {
+  const cached = getCachedExamples(req.body?.term);
+  if (!cached) {
+    next();
+    return;
+  }
+  res.set('X-Learning-Cache', 'examples-hit');
+  res.json(cached);
+}
+
 // 앱 첫 화면에서 필요한 기록/단어장/오답 데이터를 한 번에 묶어 내려준다.
 function getDashboardData(userId) {
   const history = db.prepare(`
@@ -818,7 +829,7 @@ app.post('/api/translate-ko-ja', requireAuth, serveCachedKoJaTranslation, aiCost
   }
 });
 
-app.get('/api/kanji/:char', requireAuth, async (req, res, next) => {
+app.get('/api/kanji/:char', requireAuth, aiCostLimiter, async (req, res, next) => {
   const char = String(req.params.char || '').charAt(0);
   try {
     res.json(await getKanjiDetailWithAi(char));
@@ -901,7 +912,7 @@ app.delete('/api/favorites/:id', requireAuth, (req, res) => {
   res.json({ ok: true });
 });
 
-app.post('/api/examples', requireAuth, aiCostLimiter, async (req, res, next) => {
+app.post('/api/examples', requireAuth, serveCachedExamples, aiCostLimiter, async (req, res, next) => {
   try {
     const result = await generateExamples(req.body.term);
     if (result.provider === 'cache') {
