@@ -420,6 +420,7 @@ function serveCachedAnalysis(req, res, next) {
   if (req.body?.saveHistory !== false) {
     saveAnalysisHistory(req.user.id, cached);
   }
+  res.set('X-Learning-Cache', 'analysis-hit');
   res.json(cached);
 }
 
@@ -437,6 +438,7 @@ function serveCachedKoJaTranslation(req, res, next) {
   if (req.body?.saveHistory === true) {
     saveKoJaHistory(req.user.id, result);
   }
+  res.set('X-Learning-Cache', 'translation-hit');
   res.json(result);
 }
 
