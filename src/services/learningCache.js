@@ -3,6 +3,11 @@ const { db, nowIso } = require('../db');
 const TRUSTED_TRANSLATION_PROVIDERS = new Set(['openai', 'libretranslate', 'local-exact']);
 const MAX_MEANING_ITEMS = 4;
 const ANALYSIS_CACHE_VERSION = 'analysis-v2';
+const CACHE_LIMITS = {
+  analysis_cache: 5000,
+  translation_cache: 20000,
+  meaning_cache: 60000
+};
 
 function normalizeText(value) {
   return String(value || '').trim();
@@ -286,6 +291,26 @@ function saveAnalysisCache(sourceText, result) {
   });
 }
 
+function pruneTable(tableName, limit) {
+  safely(undefined, () => {
+    db.prepare(`
+      DELETE FROM ${tableName}
+      WHERE id NOT IN (
+        SELECT id
+        FROM ${tableName}
+        ORDER BY COALESCE(last_used_at, updated_at, created_at) DESC, id DESC
+        LIMIT ?
+      )
+    `).run(limit);
+  });
+}
+
+function pruneLearningCaches() {
+  for (const [tableName, limit] of Object.entries(CACHE_LIMITS)) {
+    pruneTable(tableName, limit);
+  }
+}
+
 module.exports = {
   cleanMeanings,
   getCachedAnalysis,
@@ -295,5 +320,6 @@ module.exports = {
   getCachedWordMeanings,
   saveWordMeaning,
   getCachedKanjiMeanings,
-  saveKanjiMeaning
+  saveKanjiMeaning,
+  pruneLearningCaches
 };

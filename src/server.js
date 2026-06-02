@@ -28,6 +28,7 @@ const {
 const {
   getCachedAnalysis,
   getCachedTranslation,
+  pruneLearningCaches,
   saveWordMeaning
 } = require('./services/learningCache');
 
@@ -557,7 +558,9 @@ app.use(originGuard);
 app.use(csrfGuard);
 
 setInterval(pruneExpiredSessions, 1000 * 60 * 30).unref();
+setInterval(pruneLearningCaches, 1000 * 60 * 60 * 6).unref();
 pruneExpiredSessions();
+pruneLearningCaches();
 
 app.get('/', (req, res) => {
   res.redirect(req.user ? '/app' : '/login');
