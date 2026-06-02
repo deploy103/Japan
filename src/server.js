@@ -223,6 +223,23 @@ function destroySession(req, res) {
   clearSessionCookie(res);
 }
 
+function hashLegacySessionIps() {
+  const rows = db.prepare(`
+    SELECT id_hash, ip_address
+    FROM sessions
+    WHERE ip_address IS NOT NULL
+      AND TRIM(ip_address) <> ''
+  `).all();
+
+  for (const row of rows) {
+    const value = String(row.ip_address || '').trim();
+    if (/^[a-f0-9]{64}$/i.test(value)) {
+      continue;
+    }
+    db.prepare('UPDATE sessions SET ip_address = ? WHERE id_hash = ?').run(sha256(`ip:${value}`), row.id_hash);
+  }
+}
+
 // 세션 쿠키에는 원본 토큰만 저장하고 DB에는 해시만 저장해 유출 시 재사용 위험을 낮춘다.
 function loadSession(req, res, next) {
   res.locals.currentUser = null;
@@ -686,6 +703,7 @@ pruneExpiredSessions();
 pruneLearningCaches();
 pruneSecurityEvents();
 pruneAiUsageEvents();
+hashLegacySessionIps();
 
 app.get('/', (req, res) => {
   res.redirect(req.user ? '/app' : '/login');

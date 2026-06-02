@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { spawn } = require('node:child_process');
+const { DatabaseSync } = require('node:sqlite');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
@@ -146,6 +147,10 @@ test('server auth and learning API flow works', { timeout: 30000 }, async () => 
     const appHtml = await response.text();
     const csrf = extractCsrf(appHtml);
     assert.ok(csrf);
+    const testDb = new DatabaseSync(databasePath);
+    const sessionRows = testDb.prepare('SELECT ip_address FROM sessions').all();
+    testDb.close();
+    assert.equal(sessionRows.every((row) => /^[a-f0-9]{64}$/i.test(row.ip_address)), true);
 
     response = await fetch(`http://localhost:${port}/admin`, {
       headers: { cookie: cookieHeader(cookies) }
