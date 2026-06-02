@@ -5,6 +5,16 @@ node_modules/
 .env
 .env.*
 !.env.example
+server.txt
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Local/private project notes
+*일지*.md
+*계획*.md
+[d]eploy/
 
 # Runtime data
 data/*.db

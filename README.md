@@ -1,6 +1,6 @@
 # 일본어 문장 분석 기반 학습 보조 웹 플랫폼
 
-`PRIVATE_PLAN.md`의 1순위 학습 기능을 로그인 기반 웹앱으로 구현한 Express + EJS + SQLite 프로젝트입니다. 분석 화면은 번역·한자·후리가나·품사에 집중하고, 학습 관리와 단어 테스트는 별도 화면으로 분리했습니다.
+로그인 기반 일본어 학습 보조 웹앱입니다. 분석 화면은 번역·한자·후리가나·품사에 집중하고, 학습 관리와 단어 테스트는 별도 화면으로 분리했습니다.
 
 ## 주요 기능
 
@@ -14,6 +14,22 @@
 - 검색 기록, 단어장, 즐겨찾기, 복습 퀴즈, 오답노트, 학습 통계
 - 학습 관리 목록 10개 단위 페이지네이션, 저장 단어 기반 단어 테스트
 - 다크모드와 PC/모바일 반응형 화면
+
+## 보안 설계
+
+- 비밀번호는 `scrypt` 해시로 저장하고 원문은 저장하지 않습니다.
+- 세션 쿠키는 `HttpOnly`, `SameSite=Lax`, HTTPS 환경에서 `Secure`로 동작합니다.
+- 세션 토큰은 DB에 원문이 아니라 `SESSION_SECRET`으로 섞은 SHA-256 해시만 저장합니다.
+- 로그인 이후 변경 요청은 CSRF 토큰과 Origin 검사를 통과해야 합니다.
+- 로그인 실패 응답은 아이디 존재 여부를 구분하지 않도록 통일했습니다.
+- 운영 환경은 HTTPS `APP_ORIGIN`과 `COOKIE_SECURE=true`가 아니면 시작되지 않습니다.
+- Helmet CSP, frame 차단, object 차단, no-store 캐시 정책을 적용했습니다.
+- 로그인/회원가입, 전체 요청, OpenAI 비용 발생 API에 별도 rate limit을 적용했습니다.
+- 로그인, 계정 생성, 관리자 접근 거부, 계정 상태/권한 변경은 관리자 페이지의 보안 이벤트 로그에 남깁니다.
+- API 오류는 HTML 리다이렉트 대신 JSON 오류로 반환해 화면에서 원인을 표시합니다.
+- `.env`, SQLite DB, 백업 파일, 로컬 운영 메모는 `.gitignore`로 제외합니다.
+
+실제 API 키와 운영 값은 `.env`에만 넣고 코드나 문서에는 적지 않습니다.
 
 ## 로컬 실행
 
@@ -39,14 +55,6 @@ npm run dev
 
 캐시는 SQLite에 저장되며 서버 시작 시와 6시간마다 오래된 항목을 정리합니다.
 
-
-배포 후 확인:
-
-```bash
-curl http://127.0.0.1:3000/healthz
-npm run seed:admin
-```
-
 ## 백업
 
 SQLite DB 백업:
@@ -65,3 +73,26 @@ npm test
 npm run audit:security
 npm run audit:signatures
 ```
+
+테스트는 `OPENAI_API_KEY=`를 비워 실행되므로 네트워크와 API 비용에 의존하지 않습니다. 실제 OpenAI 연동 확인은 `.env`에 키를 넣은 개발 서버에서 진행합니다.
+
+## 파일 구조
+
+- `src/server.js`: 라우팅, 인증, 세션, 관리자, 학습 API
+- `src/db.js`: SQLite 스키마와 PRAGMA
+- `src/security.js`: 비밀번호 해시, 검증, 토큰 유틸
+- `src/services/japanese.js`: 번역, 형태소 분석, 한자, OpenAI, OCR
+- `src/services/koDictionary.js`: 한국어 뜻 사전, 조사 설명, 가타카나 뜻
+- `views/`: EJS 화면
+- `public/app.js`: 메인 학습 화면 동작
+- `public/styles.css`: 반응형/다크모드 스타일
+- `scripts/ensure-admin.js`: 관리자 계정 생성/갱신
+- `scripts/backup-db.js`: SQLite 백업
+- `tests/`: 서비스/보안/서버 통합 테스트
+
+## 남은 운영 TODO
+
+- 실제 일본어 이미지로 OCR 품질 확인
+- 운영 도메인 HTTPS 적용 후 `COOKIE_SECURE=true` 확인
+- OpenAI 키 교체 및 사용량 한도 설정
+- 서버에서 주기적 `npm audit`와 Node LTS 보안 업데이트 적용
