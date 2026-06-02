@@ -477,6 +477,33 @@ function buildVocabularyCsv(userId) {
   return `${lines.join('\r\n')}\r\n`;
 }
 
+function cacheSummary(tableName, where = '') {
+  const row = db.prepare(`
+    SELECT
+      COUNT(*) AS item_count,
+      COALESCE(SUM(hit_count), 0) AS hit_count,
+      MAX(updated_at) AS latest_update,
+      MAX(last_used_at) AS latest_use
+    FROM ${tableName}
+    ${where}
+  `).get();
+  return {
+    item_count: row.item_count,
+    hit_count: row.hit_count,
+    latest_update: row.latest_update,
+    latest_use: row.latest_use
+  };
+}
+
+function getCacheStats() {
+  return [
+    { label: '전체 분석', ...cacheSummary('analysis_cache') },
+    { label: '문장 번역', ...cacheSummary('translation_cache') },
+    { label: '단어 뜻', ...cacheSummary('meaning_cache', "WHERE item_type = 'word'") },
+    { label: '한자 뜻', ...cacheSummary('meaning_cache', "WHERE item_type = 'kanji'") }
+  ];
+}
+
 app.use(loadSession);
 app.use(ensureGuestCsrf);
 app.use(originGuard);
@@ -843,7 +870,8 @@ app.get('/admin', requireAdmin, (req, res) => {
 
   res.render('admin', {
     title: '관리자',
-    users
+    users,
+    cacheStats: getCacheStats()
   });
 });
 

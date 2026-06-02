@@ -19,6 +19,31 @@
         <table class="admin-table">
           <thead>
             <tr>
+              <th>캐시</th>
+              <th>저장 항목</th>
+              <th>재사용 횟수</th>
+              <th>최근 갱신</th>
+              <th>최근 재사용</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% cacheStats.forEach((item) => { %>
+              <tr>
+                <td><strong><%= item.label %></strong></td>
+                <td><%= item.item_count %></td>
+                <td><%= item.hit_count %></td>
+                <td><%= item.latest_update ? new Date(item.latest_update).toLocaleString('ko-KR') : '-' %></td>
+                <td><%= item.latest_use ? new Date(item.latest_use).toLocaleString('ko-KR') : '-' %></td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="admin-table-wrap">
+        <table class="admin-table">
+          <thead>
+            <tr>
               <th>아이디</th>
               <th>복구 이메일</th>
               <th>권한</th>
