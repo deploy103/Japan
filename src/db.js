@@ -49,6 +49,38 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_history_user_created ON search_history(user_id, created_at DESC);
 
+  CREATE TABLE IF NOT EXISTS translation_cache (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    direction TEXT NOT NULL CHECK (direction IN ('ja-ko', 'ko-ja')),
+    source_text TEXT NOT NULL,
+    translation_text TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    hit_count INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_used_at TEXT,
+    UNIQUE(direction, source_text)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_translation_cache_updated ON translation_cache(updated_at DESC);
+
+  CREATE TABLE IF NOT EXISTS meaning_cache (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    item_type TEXT NOT NULL CHECK (item_type IN ('word', 'kanji')),
+    cache_key TEXT NOT NULL UNIQUE,
+    term TEXT NOT NULL,
+    reading TEXT,
+    pos TEXT,
+    meanings_json TEXT NOT NULL,
+    source TEXT NOT NULL,
+    hit_count INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_used_at TEXT
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_meaning_cache_type_term ON meaning_cache(item_type, term);
+
   CREATE TABLE IF NOT EXISTS vocabulary (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -99,6 +131,51 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_wrong_notes_user_created ON wrong_notes(user_id, created_at DESC);
 `);
+
+db.exec(`
+  INSERT OR IGNORE INTO translation_cache (direction, source_text, translation_text, provider, created_at, updated_at)
+  SELECT
+    CASE
+      WHEN summary_json LIKE '%"direction":"ko-ja"%' THEN 'ko-ja'
+      ELSE 'ja-ko'
+    END,
+    source_text,
+    translation_text,
+    'history',
+    created_at,
+    created_at
+  FROM search_history
+  WHERE TRIM(source_text) <> ''
+    AND TRIM(COALESCE(translation_text, '')) <> ''
+  ORDER BY created_at DESC;
+`);
+
+const vocabularyCacheRows = db.prepare(`
+  SELECT term, reading, meaning, created_at, updated_at
+  FROM vocabulary
+  WHERE TRIM(term) <> ''
+    AND TRIM(COALESCE(meaning, '')) <> ''
+`).all();
+
+for (const row of vocabularyCacheRows) {
+  const term = String(row.term || '').trim();
+  const meaning = String(row.meaning || '').trim();
+  if (!term || !meaning) {
+    continue;
+  }
+  const timestamp = row.updated_at || row.created_at || new Date().toISOString();
+  db.prepare(`
+    INSERT OR IGNORE INTO meaning_cache (item_type, cache_key, term, reading, pos, meanings_json, source, created_at, updated_at)
+    VALUES ('word', ?, ?, ?, '', ?, 'vocabulary', ?, ?)
+  `).run(
+    `word:${term}::`,
+    term,
+    String(row.reading || '').trim(),
+    JSON.stringify([meaning]),
+    timestamp,
+    timestamp
+  );
+}
 
 function nowIso() {
   return new Date().toISOString();

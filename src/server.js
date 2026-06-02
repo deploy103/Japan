@@ -25,6 +25,7 @@ const {
   generateExamples,
   ocrImage
 } = require('./services/japanese');
+const { saveWordMeaning } = require('./services/learningCache');
 
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7;
 const GUEST_CSRF_COOKIE = 'guest_csrf';
@@ -707,6 +708,15 @@ app.post('/api/vocabulary', requireAuth, (req, res) => {
       source_text = excluded.source_text,
       updated_at = excluded.updated_at
   `).run(req.user.id, term, reading, meaning, sourceText, nowIso(), nowIso());
+  if (meaning) {
+    saveWordMeaning({
+      surface: term,
+      base: term,
+      reading,
+      pos: '名詞',
+      posKo: '명사'
+    }, [meaning], 'manual');
+  }
   res.json({ ok: true });
 });
 

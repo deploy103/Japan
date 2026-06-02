@@ -9,6 +9,14 @@ const {
   wordMeaningKo,
   katakanaMeaningKo
 } = require('./koDictionary');
+const {
+  getCachedTranslation,
+  saveTranslationCache,
+  getCachedWordMeanings,
+  saveWordMeaning,
+  getCachedKanjiMeanings,
+  saveKanjiMeaning
+} = require('./learningCache');
 
 const MAX_TEXT_LENGTH = 3000;
 const NEEDS_MEANING = '뜻 보강 필요';
@@ -67,6 +75,10 @@ function getTokenizer() {
 
 function hasKanji(value) {
   return /[\u3400-\u9fff\uf900-\ufaff]/u.test(value);
+}
+
+function isSingleKanji(value) {
+  return /^[\u3400-\u9fff\uf900-\ufaff]$/u.test(value);
 }
 
 function extractKanji(text) {
@@ -174,14 +186,22 @@ function getKanjiDetail(char) {
   };
 }
 
-function localTranslate(text, tokens) {
+function localExactTranslate(text) {
   const exact = EXACT_TRANSLATIONS[text.trim()];
+  if (!exact) {
+    return null;
+  }
+  return {
+    text: exact,
+    provider: 'local-exact',
+    note: '내장 예문 사전으로 번역했습니다.'
+  };
+}
+
+function localTranslate(text, tokens) {
+  const exact = localExactTranslate(text);
   if (exact) {
-    return {
-      text: exact,
-      provider: 'local-exact',
-      note: '내장 예문 사전으로 번역했습니다.'
-    };
+    return exact;
   }
 
   const chunks = tokens.map((token) => {
@@ -201,7 +221,7 @@ function localTranslate(text, tokens) {
   return {
     text: output || text,
     provider: 'local-gloss',
-    note: '외부 번역 서버가 없어 단어 단위 학습용 직역을 표시합니다.'
+    note: '저장된 단어 뜻과 내장 사전으로 학습용 직역을 표시합니다.'
   };
 }
 
@@ -313,6 +333,65 @@ function shouldEnrichTokenMeaning(token) {
     && !/^[。、,.!?！？\s]+$/.test(token.surface);
 }
 
+function needsMeaningForLocalTranslation(token) {
+  return token.surface
+    && token.pos !== '記号'
+    && !/^[。、,.!?！？\s]+$/.test(token.surface);
+}
+
+function canTranslateFromTokenMeanings(tokens) {
+  const contentTokens = tokens.filter(needsMeaningForLocalTranslation);
+  return contentTokens.length > 0 && contentTokens.every((token) => Boolean(token.meaning));
+}
+
+function applyCachedWordMeanings(tokens) {
+  return tokens.map((token) => {
+    if (!shouldEnrichTokenMeaning(token)) {
+      return token;
+    }
+    const meanings = getCachedWordMeanings(token);
+    if (!meanings.length && isSingleKanji(token.surface)) {
+      const kanjiMeanings = getCachedKanjiMeanings(token.surface);
+      return kanjiMeanings.length ? { ...token, meaning: kanjiMeanings.join(', ') } : token;
+    }
+    return meanings.length ? { ...token, meaning: meanings.join(', ') } : token;
+  });
+}
+
+function applyCachedKanjiDetails(kanjiDetails) {
+  return kanjiDetails.map((detail) => {
+    let next = detail;
+    if (!hasUsefulMeanings(detail.meaningsKo)) {
+      const meanings = getCachedKanjiMeanings(detail.char);
+      if (meanings.length) {
+        next = {
+          ...next,
+          meanings,
+          meaningsKo: meanings
+        };
+      }
+    }
+
+    const examples = next.examples.map((example) => {
+      if (hasUsefulMeanings(example.meanings)) {
+        return example;
+      }
+      const meanings = getCachedWordMeanings({
+        surface: example.written,
+        base: example.written,
+        reading: example.pronounced,
+        pos: '名詞',
+        posKo: '명사'
+      });
+      return meanings.length ? { ...example, meanings } : example;
+    });
+
+    return examples.some((example, index) => example !== next.examples[index])
+      ? { ...next, examples }
+      : next;
+  });
+}
+
 async function enrichWordMeaningsWithOpenAI(tokens) {
   if (!config.openaiApiKey) {
     return tokens;
@@ -369,9 +448,11 @@ async function enrichWordMeaningsWithOpenAI(tokens) {
       }
       const id = keyToId.get(tokenMeaningKey(token));
       const meanings = id ? meaningsById.get(id) : null;
-      return meanings && meanings.length
-        ? { ...token, meaning: meanings.join(', ') }
-        : token;
+      if (!meanings?.length) {
+        return token;
+      }
+      saveWordMeaning(token, meanings, 'openai');
+      return { ...token, meaning: meanings.join(', ') };
     });
   } catch (error) {
     return tokens;
@@ -436,6 +517,7 @@ async function enrichKanjiDetailsWithOpenAI(kanjiDetails) {
       let next = detail;
       const kanjiMeanings = meaningsById.get(`kanji:${detail.char}`);
       if (!hasUsefulMeanings(detail.meaningsKo) && kanjiMeanings?.length) {
+        saveKanjiMeaning(detail.char, kanjiMeanings, 'openai');
         next = {
           ...next,
           meanings: kanjiMeanings,
@@ -448,7 +530,17 @@ async function enrichKanjiDetailsWithOpenAI(kanjiDetails) {
           return example;
         }
         const meanings = meaningsById.get(`example:${detail.char}:${index}`);
-        return meanings?.length ? { ...example, meanings } : example;
+        if (!meanings?.length) {
+          return example;
+        }
+        saveWordMeaning({
+          surface: example.written,
+          base: example.written,
+          reading: example.pronounced,
+          pos: '名詞',
+          posKo: '명사'
+        }, meanings, 'openai');
+        return { ...example, meanings };
       });
 
       if (examples.some((example, index) => example !== detail.examples[index])) {
@@ -463,7 +555,7 @@ async function enrichKanjiDetailsWithOpenAI(kanjiDetails) {
 }
 
 async function getKanjiDetailWithAi(char) {
-  const [detail] = await enrichKanjiDetailsWithOpenAI([getKanjiDetail(char)]);
+  const [detail] = await enrichKanjiDetailsWithOpenAI(applyCachedKanjiDetails([getKanjiDetail(char)]));
   return detail;
 }
 
@@ -496,6 +588,28 @@ async function translateKoreanToJapanese(text) {
     throw new Error(`문장은 ${MAX_TEXT_LENGTH}자 이하로 입력해 주세요.`);
   }
 
+  const cached = getCachedTranslation('ko-ja', input);
+  if (cached) {
+    return {
+      source: input,
+      translation: cached
+    };
+  }
+
+  const exact = KO_JA_EXACT_TRANSLATIONS[input];
+  if (exact) {
+    const translation = {
+      text: exact,
+      provider: 'local-exact',
+      note: '내장 예문 사전으로 번역했습니다.'
+    };
+    saveTranslationCache('ko-ja', input, translation);
+    return {
+      source: input,
+      translation
+    };
+  }
+
   const translated = await callOpenAI({
     instructions: [
       '너는 한국어를 자연스러운 일본어로 번역하는 학습 보조 엔진이다.',
@@ -507,25 +621,15 @@ async function translateKoreanToJapanese(text) {
   });
 
   if (translated) {
-    return {
-      source: input,
-      translation: {
-        text: stripWrappingQuotes(translated),
-        provider: 'openai',
-        note: 'OpenAI 번역을 사용했습니다.'
-      }
+    const translation = {
+      text: stripWrappingQuotes(translated),
+      provider: 'openai',
+      note: 'OpenAI 번역을 사용했습니다.'
     };
-  }
-
-  const exact = KO_JA_EXACT_TRANSLATIONS[input];
-  if (exact) {
+    saveTranslationCache('ko-ja', input, translation);
     return {
       source: input,
-      translation: {
-        text: exact,
-        provider: 'local-exact',
-        note: '내장 예문 사전으로 번역했습니다.'
-      }
+      translation
     };
   }
 
@@ -729,18 +833,20 @@ async function analyzeJapanese(text) {
   }
 
   const tokenizer = await getTokenizer();
-  let tokens = tokenizer.tokenize(input).map(simplifyToken);
+  let tokens = applyCachedWordMeanings(tokenizer.tokenize(input).map(simplifyToken));
   const kanji = extractKanji(input).slice(0, 80);
-  let kanjiDetails = kanji.map(getKanjiDetail);
+  let kanjiDetails = applyCachedKanjiDetails(kanji.map(getKanjiDetail));
+  let translation = getCachedTranslation('ja-ko', input) || localExactTranslate(input);
+  if (translation?.provider === 'local-exact') {
+    saveTranslationCache('ja-ko', input, translation);
+  }
 
   const [
     enrichedTokens,
-    enrichedKanjiDetails,
-    externalTranslation
+    enrichedKanjiDetails
   ] = await Promise.all([
     enrichWordMeaningsWithOpenAI(tokens),
-    enrichKanjiDetailsWithOpenAI(kanjiDetails),
-    externalTranslate(input).catch(() => null)
+    enrichKanjiDetailsWithOpenAI(kanjiDetails)
   ]);
   tokens = enrichedTokens;
   kanjiDetails = enrichedKanjiDetails;
@@ -750,9 +856,17 @@ async function analyzeJapanese(text) {
   const structure = analyzeSentenceStructure(tokens);
   const difficulty = estimateDifficulty(input, tokens, kanjiDetails);
 
-  let translation = externalTranslation;
   if (!translation) {
-    translation = localTranslate(input, tokens);
+    if (canTranslateFromTokenMeanings(tokens)) {
+      translation = localTranslate(input, tokens);
+    } else {
+      translation = await externalTranslate(input).catch(() => null);
+      if (translation) {
+        saveTranslationCache('ja-ko', input, translation);
+      } else {
+        translation = localTranslate(input, tokens);
+      }
+    }
   }
 
   return {

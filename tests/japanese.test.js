@@ -1,5 +1,13 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const os = require('node:os');
+
+const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'japan-japanese-test-'));
+process.env.DATABASE_PATH = path.join(tempDir, 'app.sqlite');
+process.env.OPENAI_API_KEY = '';
+
 const {
   analyzeJapanese,
   extractKanji,
@@ -7,6 +15,15 @@ const {
   convertKana,
   translateKoreanToJapanese
 } = require('../src/services/japanese');
+const {
+  saveTranslationCache,
+  saveWordMeaning,
+  saveKanjiMeaning
+} = require('../src/services/learningCache');
+
+test.after(() => {
+  fs.rmSync(tempDir, { recursive: true, force: true });
+});
 
 test('extractKanji returns unique kanji from Japanese text', () => {
   assert.deepEqual(extractKanji('私は図書館で日本語を勉強します。'), ['私', '図', '書', '館', '日', '本', '語', '勉', '強']);
@@ -40,4 +57,26 @@ test('Korean to Japanese translation has local fallback without OpenAI', async (
   const result = await translateKoreanToJapanese('나는 일본어를 공부하고 있습니다.');
   assert.equal(result.translation.text, '私は日本語を勉強しています。');
   assert.equal(result.translation.provider, 'local-exact');
+});
+
+test('analysis reuses cached translation and meanings before OpenAI', async () => {
+  saveTranslationCache('ja-ko', '橋を渡る。', {
+    text: '다리를 건넙니다.',
+    provider: 'openai'
+  });
+  saveKanjiMeaning('橋', ['다리'], 'openai');
+  saveWordMeaning({
+    surface: '渡る',
+    base: '渡る',
+    reading: 'わたる',
+    pos: '動詞',
+    posKo: '동사'
+  }, ['건너다'], 'openai');
+
+  const result = await analyzeJapanese('橋を渡る。');
+  assert.equal(result.translation.text, '다리를 건넙니다.');
+  assert.equal(result.translation.provider, 'cache');
+  assert.equal(result.words.find((word) => word.surface === '橋').meaning, '다리');
+  assert.equal(result.words.find((word) => word.surface === '渡る').meaning, '건너다');
+  assert.equal(result.kanji.find((item) => item.char === '橋').meaningsKo.includes('다리'), true);
 });
