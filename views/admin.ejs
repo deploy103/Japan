@@ -117,7 +117,7 @@
             <% users.forEach((user) => { %>
               <tr>
                 <td><strong><%= user.username %></strong></td>
-                <td><%= user.recovery_email %></td>
+                <td><%= user.recovery_email_masked %></td>
                 <td><span class="role-pill <%= user.role === 'admin' ? 'role-admin' : '' %>"><%= user.role %></span></td>
                 <td><span class="status-pill <%= user.is_active ? 'status-active' : 'status-disabled' %>"><%= user.is_active ? '활성' : '비활성' %></span></td>
                 <td><%= user.active_sessions %></td>

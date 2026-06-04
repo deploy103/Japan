@@ -10,8 +10,8 @@
     <section class="translator-shell" aria-labelledby="page-title">
       <div class="workspace-heading">
         <div>
-          <p class="eyebrow">1순위 기능</p>
-          <h1 id="page-title">일본어 문장 분석</h1>
+          <p class="eyebrow">바로 사용</p>
+          <h1 id="page-title">빠른 번역 · 문장 분석</h1>
         </div>
         <div class="heading-actions">
           <a class="small-button" href="/study">학습 관리</a>
@@ -28,11 +28,12 @@
             </div>
             <button type="button" id="clear-button" class="ghost-button">지우기</button>
           </div>
-          <textarea id="source-text" name="text" maxlength="3000" spellcheck="false" required><%= sampleText %></textarea>
+          <textarea id="source-text" name="text" maxlength="3000" spellcheck="false" required placeholder="일본어 문장을 붙여넣으세요."><%= sampleText %></textarea>
           <div class="panel-actions">
+            <button type="button" id="paste-button" class="ghost-button">붙여넣기</button>
             <button type="button" id="voice-button" class="ghost-button">음성 입력</button>
             <button type="button" id="speak-button" class="ghost-button">음성 출력</button>
-            <button type="submit" class="primary-button">분석하기</button>
+            <button type="submit" class="primary-button" title="Ctrl+Enter">번역·분석</button>
           </div>
         </form>
 
@@ -45,6 +46,33 @@
           <div class="furigana-box">
             <span class="panel-label">후리가나</span>
             <div id="furigana-output" class="furigana-output"></div>
+          </div>
+        </section>
+      </section>
+
+      <section class="quick-grid">
+        <section class="analysis-section" aria-labelledby="ko-ja-title">
+          <div class="section-heading split-heading">
+            <h2 id="ko-ja-title">한국어 → 일본어</h2>
+            <span class="muted">Ctrl+Enter</span>
+          </div>
+          <div class="tool-body ko-ja-tool">
+            <textarea id="ko-ja-input" maxlength="3000" placeholder="한국어 문장을 일본어로 번역"></textarea>
+            <div class="tool-row">
+              <button id="ko-ja-button" type="button" class="small-button">번역</button>
+              <button id="ko-ja-use-button" type="button" class="small-button">분석창에 넣기</button>
+            </div>
+            <div id="ko-ja-output" class="mini-result placeholder">번역 결과가 여기에 표시됩니다.</div>
+          </div>
+        </section>
+
+        <section class="analysis-section" aria-labelledby="quick-history-title">
+          <div class="section-heading split-heading">
+            <h2 id="quick-history-title">내 최근 기록</h2>
+            <span id="quick-history-count" class="muted">0개</span>
+          </div>
+          <div id="quick-history-list" class="mini-list quick-history-list">
+            <p class="empty-text">아직 내 기록이 없습니다.</p>
           </div>
         </section>
       </section>
@@ -114,14 +142,6 @@
               <div class="kana-converter">
                 <input id="kanji-search-input" maxlength="2" placeholder="한자 상세 검색">
                 <button id="kanji-search-button" type="button" class="small-button">검색</button>
-              </div>
-              <div class="ko-ja-tool">
-                <textarea id="ko-ja-input" maxlength="3000" placeholder="한국어 문장을 일본어로 번역"></textarea>
-                <div class="tool-row">
-                  <button id="ko-ja-button" type="button" class="small-button">일본어로 번역</button>
-                  <button id="ko-ja-use-button" type="button" class="small-button">분석창에 넣기</button>
-                </div>
-                <div id="ko-ja-output" class="mini-result placeholder">한국어 → 일본어 번역 결과가 여기에 표시됩니다.</div>
               </div>
             </div>
           </section>

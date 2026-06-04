@@ -15,7 +15,7 @@
     "test": "OPENAI_API_KEY= node --test"
   },
   "engines": {
-    "node": ">=22.13.0"
+    "node": ">=22.22.2"
   },
   "dependencies": {
     "cookie-parser": "^1.4.7",

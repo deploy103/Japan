@@ -16,6 +16,11 @@ function normalizeText(value) {
   return String(value || '').trim();
 }
 
+function cacheUserId(value) {
+  const id = Number(value);
+  return Number.isSafeInteger(id) && id > 0 ? id : 0;
+}
+
 function cacheKeyText(value) {
   return normalizeText(value)
     .normalize('NFKC')
@@ -79,7 +84,8 @@ function translationCacheHit(row) {
   };
 }
 
-function getCachedTranslation(direction, sourceText) {
+function getCachedTranslation(direction, sourceText, userId = 0) {
+  const ownerId = cacheUserId(userId);
   const source = cacheKeyText(sourceText);
   if (!source) {
     return null;
@@ -88,13 +94,14 @@ function getCachedTranslation(direction, sourceText) {
     const row = db.prepare(`
     SELECT id, translation_text, provider
     FROM translation_cache
-    WHERE direction = ? AND source_text = ?
-  `).get(direction, source);
+    WHERE user_id = ? AND direction = ? AND source_text = ?
+  `).get(ownerId, direction, source);
     return translationCacheHit(row);
   });
 }
 
-function saveTranslationCache(direction, sourceText, translation) {
+function saveTranslationCache(direction, sourceText, translation, userId = 0) {
+  const ownerId = cacheUserId(userId);
   const source = cacheKeyText(sourceText);
   const text = normalizeText(translation?.text);
   const provider = normalizeText(translation?.provider);
@@ -105,13 +112,13 @@ function saveTranslationCache(direction, sourceText, translation) {
   safely(undefined, () => {
     const timestamp = nowIso();
     db.prepare(`
-    INSERT INTO translation_cache (direction, source_text, translation_text, provider, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?)
-    ON CONFLICT(direction, source_text) DO UPDATE SET
+    INSERT INTO translation_cache (user_id, direction, source_text, translation_text, provider, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(user_id, direction, source_text) DO UPDATE SET
       translation_text = excluded.translation_text,
       provider = excluded.provider,
       updated_at = excluded.updated_at
-  `).run(direction, source, text, provider, timestamp, timestamp);
+  `).run(ownerId, direction, source, text, provider, timestamp, timestamp);
   });
 }
 
@@ -138,7 +145,8 @@ function exampleCacheHit(row, requestedTerm) {
   });
 }
 
-function getCachedExamples(term) {
+function getCachedExamples(term, userId = 0) {
+  const ownerId = cacheUserId(userId);
   const termKey = cacheKeyText(term);
   if (!termKey) {
     return null;
@@ -147,13 +155,14 @@ function getCachedExamples(term) {
     const row = db.prepare(`
       SELECT id, term, examples_json
       FROM example_cache
-      WHERE term_key = ?
-    `).get(termKey);
+      WHERE user_id = ? AND term_key = ?
+    `).get(ownerId, termKey);
     return exampleCacheHit(row, term);
   });
 }
 
-function saveExampleCache(term, result) {
+function saveExampleCache(term, result, userId = 0) {
+  const ownerId = cacheUserId(userId);
   const normalizedTerm = normalizeText(term).slice(0, 80);
   const termKey = cacheKeyText(normalizedTerm);
   const examples = cleanExamples(result?.examples);
@@ -165,14 +174,14 @@ function saveExampleCache(term, result) {
   safely(undefined, () => {
     const timestamp = nowIso();
     db.prepare(`
-      INSERT INTO example_cache (term_key, term, examples_json, provider, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?)
-      ON CONFLICT(term_key) DO UPDATE SET
+      INSERT INTO example_cache (user_id, term_key, term, examples_json, provider, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(user_id, term_key) DO UPDATE SET
         term = excluded.term,
         examples_json = excluded.examples_json,
         provider = excluded.provider,
         updated_at = excluded.updated_at
-    `).run(termKey, normalizedTerm, JSON.stringify(examples), provider, timestamp, timestamp);
+    `).run(ownerId, termKey, normalizedTerm, JSON.stringify(examples), provider, timestamp, timestamp);
   });
 }
 
@@ -214,15 +223,16 @@ function kanjiCacheKey(char) {
   return `kanji:${normalizeText(char)}`;
 }
 
-function getCachedMeaning(itemType, keys) {
+function getCachedMeaning(itemType, keys, userId = 0) {
+  const ownerId = cacheUserId(userId);
   const uniqueKeys = Array.from(new Set(keys.filter(Boolean)));
   for (const key of uniqueKeys) {
     const meanings = safely([], () => {
       const row = db.prepare(`
       SELECT id, meanings_json
       FROM meaning_cache
-      WHERE item_type = ? AND cache_key = ?
-    `).get(itemType, key);
+      WHERE user_id = ? AND item_type = ? AND cache_key = ?
+    `).get(ownerId, itemType, key);
       return meaningCacheHit(row);
     });
     if (meanings.length) {
@@ -232,7 +242,8 @@ function getCachedMeaning(itemType, keys) {
   return [];
 }
 
-function saveMeaning(itemType, cacheKey, term, meanings, { reading = '', pos = '', source = 'openai' } = {}) {
+function saveMeaning(itemType, cacheKey, term, meanings, { reading = '', pos = '', source = 'openai', userId = 0 } = {}) {
+  const ownerId = cacheUserId(userId);
   const key = normalizeText(cacheKey);
   const normalizedTerm = normalizeText(term);
   const cleaned = cleanMeanings(meanings);
@@ -243,9 +254,9 @@ function saveMeaning(itemType, cacheKey, term, meanings, { reading = '', pos = '
   safely(undefined, () => {
     const timestamp = nowIso();
     db.prepare(`
-    INSERT INTO meaning_cache (item_type, cache_key, term, reading, pos, meanings_json, source, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(cache_key) DO UPDATE SET
+    INSERT INTO meaning_cache (user_id, item_type, cache_key, term, reading, pos, meanings_json, source, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(user_id, cache_key) DO UPDATE SET
       term = excluded.term,
       reading = excluded.reading,
       pos = excluded.pos,
@@ -253,6 +264,7 @@ function saveMeaning(itemType, cacheKey, term, meanings, { reading = '', pos = '
       source = excluded.source,
       updated_at = excluded.updated_at
   `).run(
+    ownerId,
     itemType,
     key,
     normalizedTerm,
@@ -266,11 +278,11 @@ function saveMeaning(itemType, cacheKey, term, meanings, { reading = '', pos = '
   });
 }
 
-function getCachedWordMeanings(token) {
-  return getCachedMeaning('word', wordCacheKeys(token));
+function getCachedWordMeanings(token, userId = 0) {
+  return getCachedMeaning('word', wordCacheKeys(token), userId);
 }
 
-function saveWordMeaning(token, meanings, source = 'openai') {
+function saveWordMeaning(token, meanings, source = 'openai', userId = 0) {
   const cleaned = cleanMeanings(meanings, 3);
   if (!cleaned.length) {
     return;
@@ -283,26 +295,26 @@ function saveWordMeaning(token, meanings, source = 'openai') {
   const terms = Array.from(new Set([surface, base].filter(Boolean)));
 
   for (const term of terms) {
-    saveMeaning('word', `word:${term}:${reading}:${normalizePos(pos)}`, term, cleaned, { reading, pos, source });
-    saveMeaning('word', `word:${term}::${normalizePos(pos)}`, term, cleaned, { pos, source });
-    saveMeaning('word', `word:${term}::`, term, cleaned, { source });
+    saveMeaning('word', `word:${term}:${reading}:${normalizePos(pos)}`, term, cleaned, { reading, pos, source, userId });
+    saveMeaning('word', `word:${term}::${normalizePos(pos)}`, term, cleaned, { pos, source, userId });
+    saveMeaning('word', `word:${term}::`, term, cleaned, { source, userId });
   }
 }
 
-function getCachedKanjiMeanings(char) {
+function getCachedKanjiMeanings(char, userId = 0) {
   const value = normalizeText(char);
   if (!value) {
     return [];
   }
-  return getCachedMeaning('kanji', [kanjiCacheKey(value)]);
+  return getCachedMeaning('kanji', [kanjiCacheKey(value)], userId);
 }
 
-function saveKanjiMeaning(char, meanings, source = 'openai') {
+function saveKanjiMeaning(char, meanings, source = 'openai', userId = 0) {
   const value = normalizeText(char);
   if (!value) {
     return;
   }
-  saveMeaning('kanji', kanjiCacheKey(value), value, cleanMeanings(meanings), { source });
+  saveMeaning('kanji', kanjiCacheKey(value), value, cleanMeanings(meanings), { source, userId });
 }
 
 function analysisCacheHit(row, requestedSource) {
@@ -328,7 +340,8 @@ function analysisCacheHit(row, requestedSource) {
   });
 }
 
-function getCachedAnalysis(sourceText) {
+function getCachedAnalysis(sourceText, userId = 0) {
+  const ownerId = cacheUserId(userId);
   const sourceKey = cacheKeyText(sourceText);
   if (!sourceKey) {
     return null;
@@ -337,13 +350,14 @@ function getCachedAnalysis(sourceText) {
     const row = db.prepare(`
       SELECT id, result_json
       FROM analysis_cache
-      WHERE source_key = ? AND version = ?
-    `).get(sourceKey, ANALYSIS_CACHE_VERSION);
+      WHERE user_id = ? AND source_key = ? AND version = ?
+    `).get(ownerId, sourceKey, ANALYSIS_CACHE_VERSION);
     return analysisCacheHit(row, sourceText);
   });
 }
 
-function saveAnalysisCache(sourceText, result) {
+function saveAnalysisCache(sourceText, result, userId = 0) {
+  const ownerId = cacheUserId(userId);
   const source = normalizeText(sourceText);
   const sourceKey = cacheKeyText(sourceText);
   const translationText = normalizeText(result?.translation?.text);
@@ -354,15 +368,16 @@ function saveAnalysisCache(sourceText, result) {
   safely(undefined, () => {
     const timestamp = nowIso();
     db.prepare(`
-      INSERT INTO analysis_cache (source_key, source_text, result_json, version, provider, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(source_key) DO UPDATE SET
+      INSERT INTO analysis_cache (user_id, source_key, source_text, result_json, version, provider, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(user_id, source_key, version) DO UPDATE SET
         source_text = excluded.source_text,
         result_json = excluded.result_json,
         version = excluded.version,
         provider = excluded.provider,
         updated_at = excluded.updated_at
     `).run(
+      ownerId,
       sourceKey,
       source,
       JSON.stringify(result),

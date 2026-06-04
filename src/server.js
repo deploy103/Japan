@@ -15,7 +15,8 @@ const {
   normalizeEmail,
   validateUsername,
   validateRecoveryEmail,
-  validatePassword
+  validatePassword,
+  PASSWORD_MAX_LENGTH
 } = require('./security');
 const {
   analyzeJapanese,
@@ -29,11 +30,14 @@ const {
   getCachedAnalysis,
   getCachedTranslation,
   getCachedExamples,
-  pruneLearningCaches,
-  saveWordMeaning
+  pruneLearningCaches
 } = require('./services/learningCache');
 
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7;
+const MAX_ACTIVE_SESSIONS_PER_USER = 5;
+const MAX_HISTORY_PER_USER = 500;
+const LOGIN_FAILURE_WINDOW_MS = 15 * 60 * 1000;
+const MAX_LOGIN_FAILURES_PER_ACCOUNT_IP = 8;
 const GUEST_CSRF_COOKIE = 'guest_csrf';
 const SESSION_COOKIE = 'sid';
 const DUMMY_PASSWORD_HASH = 'scrypt$32768$8$1$64$jUnvMa_JD5-6XnyA0QhkAg$EjkhWkS5SibRIKXJox01CpZHY7ZI57OsYbif8npK9vS-BGGXjTVRFDNC8VOoNZDN6L6F-rq4KS6k83SCighDew';
@@ -49,6 +53,8 @@ const SECURITY_EVENT_LABELS = {
   user_status_changed: '계정 상태 변경',
   user_role_changed: '계정 권한 변경'
 };
+const UNSAFE_BODY_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+const MAX_BODY_KEY_SCAN_NODES = 20000;
 const AI_OPERATION_LABELS = {
   word_meaning: '단어 뜻 보강',
   kanji_meaning: '한자 뜻 보강',
@@ -59,9 +65,12 @@ const AI_OPERATION_LABELS = {
   unknown: '기타'
 };
 const ASSET_VERSION = process.env.ASSET_VERSION || String(Date.now());
+const loginFailures = new Map();
+let shuttingDown = false;
 
 const app = express();
 app.locals.assetVersion = ASSET_VERSION;
+app.disable('x-powered-by');
 
 if (config.isProduction) {
   app.set('trust proxy', 1);
@@ -137,7 +146,8 @@ const aiCostLimiter = rateLimit({
 });
 
 app.use(express.urlencoded({ extended: false, limit: '256kb' }));
-app.use(express.json({ limit: '8mb' }));
+app.use('/api/ocr', express.json({ limit: '8mb' }));
+app.use(express.json({ limit: '256kb' }));
 app.use(cookieParser(config.sessionSecret));
 app.use('/assets', express.static(path.join(config.rootDir, 'public'), {
   maxAge: config.isProduction ? '7d' : 0,
@@ -145,6 +155,7 @@ app.use('/assets', express.static(path.join(config.rootDir, 'public'), {
 }));
 app.use((req, res, next) => {
   res.set('Cache-Control', 'no-store');
+  res.set('Permissions-Policy', 'camera=(self), microphone=(self), geolocation=(), payment=(), usb=()');
   next();
 });
 
@@ -214,7 +225,22 @@ function createSession(res, req, userId) {
     now,
     now + SESSION_TTL_MS
   );
+  pruneUserSessions(userId);
   res.cookie(SESSION_COOKIE, token, sessionCookieOptions());
+}
+
+function pruneUserSessions(userId) {
+  db.prepare(`
+    DELETE FROM sessions
+    WHERE user_id = ?
+      AND id_hash NOT IN (
+        SELECT id_hash
+        FROM sessions
+        WHERE user_id = ?
+        ORDER BY last_seen_at DESC, created_at DESC
+        LIMIT ?
+      )
+  `).run(userId, userId, MAX_ACTIVE_SESSIONS_PER_USER);
 }
 
 function destroySession(req, res) {
@@ -223,6 +249,49 @@ function destroySession(req, res) {
     db.prepare('DELETE FROM sessions WHERE id_hash = ?').run(sha256(token));
   }
   clearSessionCookie(res);
+}
+
+function loginFailureKey(req, username) {
+  return `${normalizeUsername(username)}:${sha256(`login-ip:${req.ip || ''}`)}`;
+}
+
+function getLoginFailure(key) {
+  const record = loginFailures.get(key);
+  if (!record) {
+    return null;
+  }
+  if (record.expiresAt <= Date.now()) {
+    loginFailures.delete(key);
+    return null;
+  }
+  return record;
+}
+
+function isLoginTemporarilyBlocked(req, username) {
+  const record = getLoginFailure(loginFailureKey(req, username));
+  return Boolean(record && record.count >= MAX_LOGIN_FAILURES_PER_ACCOUNT_IP);
+}
+
+function recordLoginFailure(req, username) {
+  const key = loginFailureKey(req, username);
+  const current = getLoginFailure(key);
+  loginFailures.set(key, {
+    count: (current?.count || 0) + 1,
+    expiresAt: Date.now() + LOGIN_FAILURE_WINDOW_MS
+  });
+}
+
+function clearLoginFailures(req, username) {
+  loginFailures.delete(loginFailureKey(req, username));
+}
+
+function pruneLoginFailures() {
+  const now = Date.now();
+  for (const [key, record] of loginFailures.entries()) {
+    if (record.expiresAt <= now) {
+      loginFailures.delete(key);
+    }
+  }
 }
 
 function hashLegacySessionIps() {
@@ -314,8 +383,34 @@ function wantsJson(req) {
   return req.path.startsWith('/api/') || req.accepts(['html', 'json']) === 'json';
 }
 
-function isAuthPost(req) {
-  return req.method === 'POST' && (req.path === '/login' || req.path === '/register');
+function hasUnsafeObjectKey(value) {
+  const stack = [value];
+  let scanned = 0;
+  while (stack.length) {
+    const current = stack.pop();
+    if (!current || typeof current !== 'object') {
+      continue;
+    }
+    scanned += 1;
+    if (scanned > MAX_BODY_KEY_SCAN_NODES) {
+      return true;
+    }
+    for (const key of Object.keys(current)) {
+      if (UNSAFE_BODY_KEYS.has(key)) {
+        return true;
+      }
+      stack.push(current[key]);
+    }
+  }
+  return false;
+}
+
+function rejectUnsafeRequestKeys(req, res, next) {
+  if (hasUnsafeObjectKey(req.body) || hasUnsafeObjectKey(req.query)) {
+    securityError(req, res, 400, '요청에 허용되지 않는 키가 포함되어 있습니다.');
+    return;
+  }
+  next();
 }
 
 function securityError(req, res, status, message) {
@@ -344,13 +439,9 @@ function securityError(req, res, status, message) {
   });
 }
 
-// 로그인/회원가입은 Origin 헤더가 빠지는 브라우저/프록시 사례가 있어 별도 속도제한과 입력검증으로 처리한다.
+// Origin 헤더가 빠지는 브라우저/프록시 사례는 허용하되, 헤더가 있으면 허용 출처인지 확인한다.
 function originGuard(req, res, next) {
   if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
-    next();
-    return;
-  }
-  if (isAuthPost(req)) {
     next();
     return;
   }
@@ -406,6 +497,16 @@ function csrfGuard(req, res, next) {
 
   const provided = req.get('x-csrf-token') || req.body._csrf;
   const expected = req.session ? req.session.csrfToken : req.cookies[GUEST_CSRF_COOKIE];
+  if (!safeEqual(provided, expected)) {
+    securityError(req, res, 403, '로그인 정보가 만료되었습니다. 페이지를 새로고침한 뒤 다시 시도해 주세요.');
+    return;
+  }
+  next();
+}
+
+function requireCostlyReadCsrf(req, res, next) {
+  const provided = req.get('x-csrf-token');
+  const expected = req.session?.csrfToken;
   if (!safeEqual(provided, expected)) {
     securityError(req, res, 403, '로그인 정보가 만료되었습니다. 페이지를 새로고침한 뒤 다시 시도해 주세요.');
     return;
@@ -473,6 +574,7 @@ function saveAnalysisHistory(userId, result) {
     INSERT INTO search_history (user_id, source_text, translation_text, summary_json, created_at)
     VALUES (?, ?, ?, ?, ?)
   `).run(userId, result.source, result.translation.text, summarizeAnalysis(result), nowIso());
+  pruneUserHistory(userId);
 }
 
 function saveKoJaHistory(userId, result) {
@@ -480,10 +582,25 @@ function saveKoJaHistory(userId, result) {
     INSERT INTO search_history (user_id, source_text, translation_text, summary_json, created_at)
     VALUES (?, ?, ?, ?, ?)
   `).run(userId, result.source, result.translation.text, JSON.stringify({ direction: 'ko-ja' }), nowIso());
+  pruneUserHistory(userId);
+}
+
+function pruneUserHistory(userId) {
+  db.prepare(`
+    DELETE FROM search_history
+    WHERE user_id = ?
+      AND id NOT IN (
+        SELECT id
+        FROM search_history
+        WHERE user_id = ?
+        ORDER BY created_at DESC, id DESC
+        LIMIT ?
+      )
+  `).run(userId, userId, MAX_HISTORY_PER_USER);
 }
 
 function serveCachedAnalysis(req, res, next) {
-  const cached = getCachedAnalysis(req.body?.text);
+  const cached = getCachedAnalysis(req.body?.text, req.user.id);
   if (!cached) {
     next();
     return;
@@ -497,7 +614,7 @@ function serveCachedAnalysis(req, res, next) {
 
 function serveCachedKoJaTranslation(req, res, next) {
   const input = String(req.body?.text || '').trim();
-  const cached = getCachedTranslation('ko-ja', input);
+  const cached = getCachedTranslation('ko-ja', input, req.user.id);
   if (!cached) {
     next();
     return;
@@ -514,7 +631,7 @@ function serveCachedKoJaTranslation(req, res, next) {
 }
 
 function serveCachedExamples(req, res, next) {
-  const cached = getCachedExamples(req.body?.term);
+  const cached = getCachedExamples(req.body?.term, req.user.id);
   if (!cached) {
     next();
     return;
@@ -583,6 +700,15 @@ function getDashboardData(userId, { historyLimit = 200, vocabularyLimit = 500, f
 
 function normalizeShortText(value, maxLength = 200) {
   return String(value || '').trim().slice(0, maxLength);
+}
+
+function positiveInteger(value) {
+  const id = Number(value);
+  return Number.isSafeInteger(id) && id > 0 ? id : 0;
+}
+
+function isSingleKanjiChar(value) {
+  return /^[\u3400-\u9fff\uf900-\ufaff]$/u.test(String(value || ''));
 }
 
 function csvCell(value) {
@@ -692,12 +818,23 @@ function getAiUsageStats() {
   }));
 }
 
+function maskEmail(email) {
+  const [local, domain] = String(email || '').split('@');
+  if (!local || !domain) {
+    return '-';
+  }
+  const visible = local.length <= 2 ? local.charAt(0) : `${local.charAt(0)}${local.charAt(local.length - 1)}`;
+  return `${visible}${'*'.repeat(Math.max(2, local.length - visible.length))}@${domain}`;
+}
+
 app.use(loadSession);
+app.use(rejectUnsafeRequestKeys);
 app.use(ensureGuestCsrf);
 app.use(originGuard);
 app.use(csrfGuard);
 
 setInterval(pruneExpiredSessions, 1000 * 60 * 30).unref();
+setInterval(pruneLoginFailures, LOGIN_FAILURE_WINDOW_MS).unref();
 setInterval(pruneLearningCaches, 1000 * 60 * 60 * 6).unref();
 setInterval(pruneSecurityEvents, 1000 * 60 * 60 * 6).unref();
 setInterval(pruneAiUsageEvents, 1000 * 60 * 60 * 6).unref();
@@ -712,6 +849,14 @@ app.get('/', (req, res) => {
 });
 
 app.get('/healthz', (req, res) => {
+  if (shuttingDown) {
+    res.status(503).json({
+      ok: false,
+      shuttingDown: true,
+      time: nowIso()
+    });
+    return;
+  }
   res.json({
     ok: true,
     time: nowIso()
@@ -731,7 +876,9 @@ app.post('/login', authLimiter, async (req, res, next) => {
     const username = normalizeUsername(req.body.username);
     const password = String(req.body.password || '');
     const usernameError = validateUsername(username);
-    const passwordError = password ? '' : '비밀번호를 입력해 주세요.';
+    const passwordError = !password
+      ? '비밀번호를 입력해 주세요.'
+      : (password.length > PASSWORD_MAX_LENGTH ? `비밀번호는 ${PASSWORD_MAX_LENGTH}자를 넘을 수 없습니다.` : '');
     if (usernameError || passwordError) {
       renderAuth(res.status(400), 'login', {
         title: '로그인',
@@ -741,10 +888,21 @@ app.post('/login', authLimiter, async (req, res, next) => {
       return;
     }
 
+    if (isLoginTemporarilyBlocked(req, username)) {
+      logSecurityEvent(req, 'login_failed', { username, detail: 'temporary lockout' });
+      renderAuth(res.status(429), 'login', {
+        title: '로그인',
+        error: '로그인 실패가 반복되어 잠시 후 다시 시도해 주세요.',
+        values: { username }
+      });
+      return;
+    }
+
     const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username);
     const passwordMatches = await verifyPassword(password, user ? user.password_hash : DUMMY_PASSWORD_HASH);
 
     if (!user || !passwordMatches) {
+      recordLoginFailure(req, username);
       logSecurityEvent(req, 'login_failed', { username, detail: 'invalid credentials' });
       renderAuth(res.status(401), 'login', {
         title: '로그인',
@@ -765,6 +923,7 @@ app.post('/login', authLimiter, async (req, res, next) => {
     }
 
     destroySession(req, res);
+    clearLoginFailures(req, username);
     db.prepare('DELETE FROM sessions WHERE user_id = ? AND expires_at <= ?').run(user.id, Date.now());
     createSession(res, req, user.id);
     db.prepare('UPDATE users SET last_login_at = ?, updated_at = ? WHERE id = ?').run(nowIso(), nowIso(), user.id);
@@ -820,7 +979,7 @@ app.post('/register', authLimiter, async (req, res, next) => {
     db.exec('BEGIN IMMEDIATE');
     try {
       const count = db.prepare('SELECT COUNT(*) AS count FROM users').get().count;
-      const role = count === 0 ? 'admin' : 'user';
+      const role = config.allowFirstUserAdmin && count === 0 ? 'admin' : 'user';
       createdRole = role;
       result = db.prepare(`
         INSERT INTO users (username, password_hash, recovery_email, role, created_at, updated_at)
@@ -855,7 +1014,7 @@ app.get('/app', requireAuth, (req, res) => {
   const requestedText = normalizeShortText(req.query.text, 3000);
   res.render('app', {
     title: '문장 분석',
-    sampleText: requestedText || '私は昨日、図書館で日本語の本を読みました。'
+    sampleText: requestedText
   });
 });
 
@@ -874,7 +1033,7 @@ app.get('/word-test', requireAuth, (req, res) => {
 
 app.post('/api/analyze', requireAuth, serveCachedAnalysis, aiCostLimiter, async (req, res, next) => {
   try {
-    const result = await analyzeJapanese(req.body.text);
+    const result = await analyzeJapanese(req.body.text, req.user.id);
     if (req.body.saveHistory !== false) {
       saveAnalysisHistory(req.user.id, result);
     }
@@ -890,7 +1049,7 @@ app.post('/api/analyze', requireAuth, serveCachedAnalysis, aiCostLimiter, async 
 
 app.post('/api/translate-ko-ja', requireAuth, serveCachedKoJaTranslation, aiCostLimiter, async (req, res, next) => {
   try {
-    const result = await translateKoreanToJapanese(req.body.text);
+    const result = await translateKoreanToJapanese(req.body.text, req.user.id);
     if (req.body.saveHistory === true) {
       saveKoJaHistory(req.user.id, result);
     }
@@ -904,10 +1063,14 @@ app.post('/api/translate-ko-ja', requireAuth, serveCachedKoJaTranslation, aiCost
   }
 });
 
-app.get('/api/kanji/:char', requireAuth, aiCostLimiter, async (req, res, next) => {
-  const char = String(req.params.char || '').charAt(0);
+app.get('/api/kanji/:char', requireAuth, requireCostlyReadCsrf, aiCostLimiter, async (req, res, next) => {
+  const char = [...String(req.params.char || '').trim()][0] || '';
+  if (!isSingleKanjiChar(char)) {
+    res.status(400).json({ error: '한자 한 글자를 입력해 주세요.' });
+    return;
+  }
   try {
-    res.json(await getKanjiDetailWithAi(char));
+    res.json(await getKanjiDetailWithAi(char, req.user.id));
   } catch (error) {
     next(error);
   }
@@ -925,7 +1088,12 @@ app.get('/api/vocabulary.csv', requireAuth, (req, res) => {
 });
 
 app.delete('/api/history/:id', requireAuth, (req, res) => {
-  db.prepare('DELETE FROM search_history WHERE id = ? AND user_id = ?').run(Number(req.params.id), req.user.id);
+  const targetId = positiveInteger(req.params.id);
+  if (!targetId) {
+    res.status(400).json({ error: '삭제할 기록을 확인해 주세요.' });
+    return;
+  }
+  db.prepare('DELETE FROM search_history WHERE id = ? AND user_id = ?').run(targetId, req.user.id);
   res.json({ ok: true });
 });
 
@@ -948,20 +1116,16 @@ app.post('/api/vocabulary', requireAuth, (req, res) => {
       source_text = excluded.source_text,
       updated_at = excluded.updated_at
   `).run(req.user.id, term, reading, meaning, sourceText, nowIso(), nowIso());
-  if (meaning) {
-    saveWordMeaning({
-      surface: term,
-      base: term,
-      reading,
-      pos: '名詞',
-      posKo: '명사'
-    }, [meaning], 'manual');
-  }
   res.json({ ok: true });
 });
 
 app.delete('/api/vocabulary/:id', requireAuth, (req, res) => {
-  db.prepare('DELETE FROM vocabulary WHERE id = ? AND user_id = ?').run(Number(req.params.id), req.user.id);
+  const targetId = positiveInteger(req.params.id);
+  if (!targetId) {
+    res.status(400).json({ error: '삭제할 단어를 확인해 주세요.' });
+    return;
+  }
+  db.prepare('DELETE FROM vocabulary WHERE id = ? AND user_id = ?').run(targetId, req.user.id);
   res.json({ ok: true });
 });
 
@@ -983,18 +1147,27 @@ app.post('/api/favorites', requireAuth, (req, res) => {
 });
 
 app.delete('/api/favorites/:id', requireAuth, (req, res) => {
-  db.prepare('DELETE FROM favorites WHERE id = ? AND user_id = ?').run(Number(req.params.id), req.user.id);
+  const targetId = positiveInteger(req.params.id);
+  if (!targetId) {
+    res.status(400).json({ error: '삭제할 즐겨찾기를 확인해 주세요.' });
+    return;
+  }
+  db.prepare('DELETE FROM favorites WHERE id = ? AND user_id = ?').run(targetId, req.user.id);
   res.json({ ok: true });
 });
 
 app.post('/api/examples', requireAuth, serveCachedExamples, aiCostLimiter, async (req, res, next) => {
   try {
-    const result = await generateExamples(req.body.term);
+    const result = await generateExamples(req.body.term, req.user.id);
     if (result.provider === 'cache') {
       res.set('X-Learning-Cache', 'examples-hit');
     }
     res.json(result);
   } catch (error) {
+    if (error.message && error.message.includes('입력')) {
+      res.status(400).json({ error: error.message });
+      return;
+    }
     next(error);
   }
 });
@@ -1037,7 +1210,7 @@ app.get('/api/quiz', requireAuth, (req, res) => {
 });
 
 app.post('/api/quiz', requireAuth, (req, res) => {
-  const vocabularyId = Number(req.body.vocabularyId);
+  const vocabularyId = positiveInteger(req.body.vocabularyId);
   const submittedAnswer = normalizeShortText(req.body.answer, 120);
   const item = db.prepare('SELECT id, term, meaning FROM vocabulary WHERE id = ? AND user_id = ?').get(vocabularyId, req.user.id);
   if (!item || !submittedAnswer) {
@@ -1068,7 +1241,7 @@ app.post('/api/quiz', requireAuth, (req, res) => {
 });
 
 app.post('/api/word-test/attempt', requireAuth, (req, res) => {
-  const vocabularyId = Number(req.body.vocabularyId);
+  const vocabularyId = positiveInteger(req.body.vocabularyId);
   const mode = normalizeShortText(req.body.mode, 20);
   const submittedAnswer = normalizeShortText(req.body.answer, 120);
   const item = db.prepare('SELECT id, term, reading, meaning FROM vocabulary WHERE id = ? AND user_id = ?').get(vocabularyId, req.user.id);
@@ -1126,7 +1299,10 @@ app.get('/admin', requireAdmin, (req, res) => {
     LEFT JOIN sessions ON sessions.user_id = users.id AND sessions.expires_at > ?
     GROUP BY users.id
     ORDER BY users.created_at DESC
-  `).all(Date.now());
+  `).all(Date.now()).map((user) => ({
+    ...user,
+    recovery_email_masked: maskEmail(user.recovery_email)
+  }));
 
   res.render('admin', {
     title: '관리자',
@@ -1138,7 +1314,14 @@ app.get('/admin', requireAdmin, (req, res) => {
 });
 
 app.post('/admin/users/:id/status', requireAdmin, (req, res) => {
-  const targetId = Number(req.params.id);
+  const targetId = positiveInteger(req.params.id);
+  if (!targetId) {
+    res.status(400).render('error', {
+      title: '처리 불가',
+      message: '계정 정보를 확인해 주세요.'
+    });
+    return;
+  }
   if (targetId === req.user.id) {
     res.status(400).render('error', {
       title: '처리 불가',
@@ -1164,7 +1347,14 @@ app.post('/admin/users/:id/status', requireAdmin, (req, res) => {
 });
 
 app.post('/admin/users/:id/role', requireAdmin, (req, res) => {
-  const targetId = Number(req.params.id);
+  const targetId = positiveInteger(req.params.id);
+  if (!targetId) {
+    res.status(400).render('error', {
+      title: '처리 불가',
+      message: '계정 정보를 확인해 주세요.'
+    });
+    return;
+  }
   if (targetId === req.user.id) {
     res.status(400).render('error', {
       title: '처리 불가',
@@ -1203,10 +1393,14 @@ app.use((error, req, res, next) => {
     next(error);
     return;
   }
-  const status = error.type === 'entity.too.large' ? 413 : 500;
+  const status = error.type === 'entity.too.large'
+    ? 413
+    : (error.type === 'entity.parse.failed' ? 400 : 500);
   const message = status === 413
     ? '요청 본문이 너무 큽니다.'
-    : (config.isProduction ? '요청을 처리하지 못했습니다.' : error.message);
+    : (status === 400
+      ? '요청 본문 형식이 올바르지 않습니다.'
+      : (config.isProduction ? '요청을 처리하지 못했습니다.' : error.message));
   if (req.path.startsWith('/api/')) {
     res.status(status).json({ error: message });
     return;
@@ -1217,6 +1411,46 @@ app.use((error, req, res, next) => {
   });
 });
 
-app.listen(config.port, () => {
+const server = app.listen(config.port, () => {
   console.log(`Japanese learning assistant listening on http://localhost:${config.port}`);
 });
+
+server.requestTimeout = 30_000;
+server.headersTimeout = 10_000;
+server.keepAliveTimeout = 5_000;
+
+function closeDatabase() {
+  try {
+    db.close();
+  } catch (error) {
+    // The database may already be closed during tests or watch-mode restarts.
+  }
+}
+
+function shutdown(signal) {
+  if (shuttingDown) {
+    return;
+  }
+  shuttingDown = true;
+  console.log(`${signal} received: closing HTTP server`);
+  const forceExit = setTimeout(() => {
+    console.error('forced_shutdown_after_timeout');
+    closeDatabase();
+    process.exit(1);
+  }, 10_000);
+  forceExit.unref();
+
+  server.close((error) => {
+    clearTimeout(forceExit);
+    closeDatabase();
+    if (error) {
+      console.error(error);
+      process.exit(1);
+    }
+    process.exit(0);
+  });
+  server.closeIdleConnections?.();
+}
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));

@@ -34,7 +34,15 @@ async function main() {
   console.log(`admin_created=${username}`);
 }
 
-main().catch((error) => {
-  console.error(error.message);
-  process.exit(1);
-});
+main()
+  .catch((error) => {
+    console.error(error.message);
+    process.exitCode = 1;
+  })
+  .finally(() => {
+    try {
+      db.close();
+    } catch (error) {
+      // Ignore close errors during process shutdown.
+    }
+  });

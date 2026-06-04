@@ -19,15 +19,22 @@
 
 - 비밀번호는 `scrypt` 해시로 저장하고 원문은 저장하지 않습니다.
 - 세션 쿠키는 `HttpOnly`, `SameSite=Lax`, HTTPS 환경에서 `Secure`로 동작합니다.
-- 세션 토큰은 DB에 원문이 아니라 `SESSION_SECRET`으로 섞은 SHA-256 해시만 저장합니다.
+- 세션 토큰은 DB에 원문이 아니라 `SESSION_SECRET` 기반 HMAC-SHA-256 해시만 저장합니다.
 - 로그인 이후 변경 요청은 CSRF 토큰과 Origin 검사를 통과해야 합니다.
 - 로그인 실패 응답은 아이디 존재 여부를 구분하지 않도록 통일했습니다.
 - 운영 환경은 HTTPS `APP_ORIGIN`과 `COOKIE_SECURE=true`가 아니면 시작되지 않습니다.
+- 운영 환경은 첫 가입자 자동 관리자 승격을 기본 비활성화하고, 관리자 계정은 `npm run seed:admin`으로 생성합니다.
 - Helmet CSP, frame 차단, object 차단, no-store 캐시 정책을 적용했습니다.
 - 로그인/회원가입, 전체 요청, OpenAI 비용 발생 API에 별도 rate limit을 적용했습니다.
+- 반복 로그인 실패는 계정+IP 단위로 짧게 잠가 무차별 대입을 더 빨리 차단합니다.
+- 일반 JSON API 본문은 256KB로 제한하고, OCR 업로드만 별도 8MB 한도를 사용합니다.
+- 외부 번역 서버 URL은 자격정보 없는 `http://` 또는 `https://`만 허용합니다.
+- 느린 요청 기반 DoS를 줄이기 위해 HTTP request/header/keep-alive timeout을 명시합니다.
+- 배포 재시작과 종료 신호에서는 HTTP 서버와 SQLite 연결을 순서대로 닫습니다.
 - 로그인, 계정 생성, 관리자 접근 거부, 계정 상태/권한 변경은 관리자 페이지의 보안 이벤트 로그에 남깁니다.
 - API 오류는 HTML 리다이렉트 대신 JSON 오류로 반환해 화면에서 원인을 표시합니다.
 - `.env`, SQLite DB, 백업 파일, 로컬 운영 메모는 `.gitignore`로 제외합니다.
+- 검색 기록, 단어장, 즐겨찾기, 오답, 퀴즈 기록과 학습 캐시는 `user_id`로 분리합니다.
 
 실제 API 키와 운영 값은 `.env`에만 넣고 코드나 문서에는 적지 않습니다.
 
@@ -39,7 +46,16 @@ cp .env.example .env
 npm run dev
 ```
 
-브라우저에서 `http://localhost:3000`으로 접속합니다. 첫 번째 가입자는 자동으로 관리자 권한을 받습니다.
+Node.js `22.22.2` 이상에서 실행합니다. 브라우저에서 `http://localhost:3000`으로 접속합니다. 개발 기본값에서는 첫 번째 가입자가 자동으로 관리자 권한을 받습니다.
+
+운영에서는 `.env`에 `FIRST_USER_ADMIN=false`를 두고 아래 값으로 관리자 계정을 생성하세요.
+
+```bash
+node -e "console.log(require('node:crypto').randomBytes(48).toString('base64url'))"
+ADMIN_USERNAME=admin ADMIN_RECOVERY_EMAIL=admin@example.com ADMIN_PASSWORD='StrongPassword123!' npm run seed:admin
+```
+
+첫 번째 명령으로 생성한 값을 `.env`의 `SESSION_SECRET`에 넣으세요.
 
 ## AI 사용량 절감 캐시
 
@@ -49,7 +65,7 @@ npm run dev
 - `translation_cache`: 일본어 → 한국어, 한국어 → 일본어 문장 번역 재사용
 - `example_cache`: 예문 생성 결과 재사용
 - `meaning_cache`: 단어 뜻, 한자 뜻, 한자 예시 단어 뜻 재사용
-- 기존 `search_history`, `vocabulary`에 저장된 번역과 뜻은 서버 시작 시 캐시로 편입
+- 캐시는 모두 사용자별로 분리해 다른 계정에 재사용하지 않음
 - 캐시 히트 응답은 `X-Learning-Cache` 헤더를 포함하고 AI rate limit을 우회
 - 관리자 페이지에서 캐시 저장 항목 수, 재사용 횟수, 최근 사용 시각과 OpenAI 작업별 토큰 합계를 확인 가능
 

@@ -4,6 +4,7 @@ const form = document.querySelector('#analysis-form');
 const sourceText = document.querySelector('#source-text');
 const charCount = document.querySelector('#char-count');
 const clearButton = document.querySelector('#clear-button');
+const pasteButton = document.querySelector('#paste-button');
 const translationOutput = document.querySelector('#translation-output');
 const providerNote = document.querySelector('#provider-note');
 const furiganaOutput = document.querySelector('#furigana-output');
@@ -24,6 +25,8 @@ const koJaInput = document.querySelector('#ko-ja-input');
 const koJaButton = document.querySelector('#ko-ja-button');
 const koJaUseButton = document.querySelector('#ko-ja-use-button');
 const koJaOutput = document.querySelector('#ko-ja-output');
+const quickHistoryList = document.querySelector('#quick-history-list');
+const quickHistoryCount = document.querySelector('#quick-history-count');
 const difficultyOutput = document.querySelector('#difficulty-output');
 const structureOutput = document.querySelector('#structure-output');
 const particleOutput = document.querySelector('#particle-output');
@@ -83,7 +86,7 @@ function setProviderStatus(note, provider = 'idle', cacheHeader = '') {
 function setLoading(isLoading) {
   const button = form.querySelector('button[type="submit"]');
   button.disabled = isLoading;
-  button.textContent = isLoading ? '분석 중' : '분석하기';
+  button.textContent = isLoading ? '분석 중' : '번역·분석';
 }
 
 function updateCount() {
@@ -132,6 +135,12 @@ function emptyText(message) {
   text.className = 'empty-text';
   text.textContent = message;
   return text;
+}
+
+function createText(tag, text) {
+  const element = document.createElement(tag);
+  element.textContent = text;
+  return element;
 }
 
 function getSectionFooter(anchor, id) {
@@ -470,6 +479,46 @@ function renderResult(data, cacheHeader = '') {
   renderGrammar(data);
 }
 
+function renderQuickHistory(items) {
+  const history = Array.isArray(items) ? items.slice(0, 5) : [];
+  quickHistoryList.replaceChildren();
+  quickHistoryCount.textContent = `${items?.length || 0}개`;
+  if (!history.length) {
+    quickHistoryList.append(emptyText('아직 내 기록이 없습니다.'));
+    return;
+  }
+
+  for (const item of history) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'history-item';
+    button.append(
+      createText('strong', item.source_text || ''),
+      createText('span', item.translation_text || ''),
+      createText('small', item.created_at || '')
+    );
+    button.addEventListener('click', () => {
+      sourceText.value = item.source_text || '';
+      updateCount();
+      analyze(false);
+    });
+    quickHistoryList.append(button);
+  }
+}
+
+async function refreshQuickHistory() {
+  try {
+    const response = await fetch('/api/dashboard');
+    if (!response.ok) {
+      return;
+    }
+    const dashboard = await response.json();
+    renderQuickHistory(dashboard.history || []);
+  } catch (error) {
+    renderQuickHistory([]);
+  }
+}
+
 async function apiPostWithMeta(url, body) {
   const response = await fetch(url, {
     method: 'POST',
@@ -529,7 +578,7 @@ async function translateKoreanToJapanese() {
     setText(koJaOutput, error.message);
   } finally {
     koJaButton.disabled = false;
-    koJaButton.textContent = '일본어로 번역';
+    koJaButton.textContent = '번역';
   }
 }
 
@@ -572,6 +621,9 @@ async function analyze(saveHistory = true) {
       throw new Error(data.error || '분석에 실패했습니다.');
     }
     renderResult(data, response.headers.get('x-learning-cache') || '');
+    if (saveHistory) {
+      refreshQuickHistory();
+    }
   } catch (error) {
     translationOutput.classList.add('placeholder');
     setText(translationOutput, error.message);
@@ -620,12 +672,37 @@ form.addEventListener('submit', (event) => {
 });
 
 sourceText.addEventListener('input', updateCount);
+sourceText.addEventListener('keydown', (event) => {
+  if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+    event.preventDefault();
+    analyze(true);
+  }
+});
 
 clearButton.addEventListener('click', () => {
   sourceText.value = '';
   updateCount();
   resetResults();
   sourceText.focus();
+});
+
+pasteButton.addEventListener('click', async () => {
+  if (!navigator.clipboard?.readText) {
+    sourceText.focus();
+    return;
+  }
+  try {
+    const text = await navigator.clipboard.readText();
+    if (!text) {
+      sourceText.focus();
+      return;
+    }
+    sourceText.value = text.slice(0, sourceText.maxLength);
+    updateCount();
+    analyze(true);
+  } catch (error) {
+    sourceText.focus();
+  }
 });
 
 voiceButton.addEventListener('click', () => {
@@ -683,8 +760,16 @@ kanjiSearchButton.addEventListener('click', async () => {
   if (!char) {
     return;
   }
-  const response = await fetch(`/api/kanji/${encodeURIComponent(char)}`);
+  const response = await fetch(`/api/kanji/${encodeURIComponent(char)}`, {
+    headers: {
+      'x-csrf-token': csrfToken
+    }
+  });
   const detail = await response.json();
+  if (!response.ok) {
+    kanjiDetail.replaceChildren(emptyText(detail.error || '한자 상세 정보를 불러오지 못했습니다.'));
+    return;
+  }
   lastKanji = [detail];
   kanjiPage = 1;
   renderKanjiDetail(detail);
@@ -715,3 +800,7 @@ koJaUseButton.addEventListener('click', () => {
 });
 
 updateCount();
+refreshQuickHistory();
+if (sourceText.value.trim()) {
+  analyze(false);
+}

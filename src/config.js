@@ -9,13 +9,17 @@ if (!Number.isInteger(port) || port < 1 || port > 65535) {
   throw new Error('PORT must be an integer between 1 and 65535.');
 }
 
-const configuredSessionSecret = process.env.SESSION_SECRET || '';
+const configuredSessionSecret = String(process.env.SESSION_SECRET || '').trim();
 const sessionSecret = configuredSessionSecret || crypto.randomBytes(48).toString('base64url');
-if (process.env.NODE_ENV === 'production' && configuredSessionSecret.length < 32) {
-  throw new Error('SESSION_SECRET must be set to at least 32 characters in production.');
-}
+const knownWeakSessionSecrets = new Set([
+  'replace-with-at-least-32-random-characters',
+  'change-me',
+  'changeme',
+  'development-secret',
+  'production-secret'
+]);
 
-const appOrigin = process.env.APP_ORIGIN || `http://localhost:${port}`;
+const appOrigin = String(process.env.APP_ORIGIN || '').trim() || `http://localhost:${port}`;
 let parsedAppOrigin;
 try {
   parsedAppOrigin = new URL(appOrigin);
@@ -24,10 +28,40 @@ try {
 }
 
 const secureCookies = process.env.COOKIE_SECURE
-  ? process.env.COOKIE_SECURE === 'true'
+  ? String(process.env.COOKIE_SECURE).trim() === 'true'
   : appOrigin.startsWith('https://');
+const allowFirstUserAdmin = process.env.FIRST_USER_ADMIN
+  ? String(process.env.FIRST_USER_ADMIN).trim() === 'true'
+  : process.env.NODE_ENV !== 'production';
+
+function optionalHttpUrl(envName) {
+  const value = String(process.env[envName] || '').trim();
+  if (!value) {
+    return '';
+  }
+  let parsed;
+  try {
+    parsed = new URL(value);
+  } catch (error) {
+    throw new Error(`${envName} must be a valid URL.`);
+  }
+  if (!['http:', 'https:'].includes(parsed.protocol)) {
+    throw new Error(`${envName} must use http:// or https://.`);
+  }
+  if (parsed.username || parsed.password) {
+    throw new Error(`${envName} must not include credentials.`);
+  }
+  if (parsed.search) {
+    throw new Error(`${envName} must not include a query string.`);
+  }
+  parsed.hash = '';
+  return parsed.href.replace(/\/$/, '');
+}
 
 if (process.env.NODE_ENV === 'production') {
+  if (configuredSessionSecret.length < 32 || knownWeakSessionSecrets.has(configuredSessionSecret.toLowerCase())) {
+    throw new Error('SESSION_SECRET must be set to a unique random value of at least 32 characters in production.');
+  }
   if (parsedAppOrigin.protocol !== 'https:') {
     throw new Error('APP_ORIGIN must use https:// in production.');
   }
@@ -45,7 +79,8 @@ module.exports = {
   databasePath: path.resolve(rootDir, process.env.DATABASE_PATH || './data/app.sqlite'),
   sessionSecret,
   secureCookies,
-  libreTranslateUrl: process.env.LIBRETRANSLATE_URL || '',
+  allowFirstUserAdmin,
+  libreTranslateUrl: optionalHttpUrl('LIBRETRANSLATE_URL'),
   libreTranslateApiKey: process.env.LIBRETRANSLATE_API_KEY || '',
   openaiApiKey: process.env.OPENAI_API_KEY || '',
   openaiModel: process.env.OPENAI_MODEL || 'gpt-5.2'

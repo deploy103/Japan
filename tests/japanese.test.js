@@ -20,7 +20,11 @@ const {
 const {
   saveTranslationCache,
   saveWordMeaning,
-  saveKanjiMeaning
+  saveKanjiMeaning,
+  getCachedExamples,
+  saveExampleCache,
+  getCachedWordMeanings,
+  getCachedKanjiMeanings
 } = require('../src/services/learningCache');
 
 test.after(() => {
@@ -117,6 +121,42 @@ test('example generation is cached after first local result', async () => {
   const second = await generateExamples('図書館');
   assert.equal(second.provider, 'cache');
   assert.equal(second.examples[0].japanese, first.examples[0].japanese);
+});
+
+test('example and meaning caches are scoped by user', () => {
+  const ownerId = 101;
+  const otherId = 202;
+  saveExampleCache('秘密語', {
+    provider: 'local-template',
+    examples: [{ japanese: '秘密語を使います。', korean: '비밀어를 사용합니다.' }]
+  }, ownerId);
+  saveWordMeaning({
+    surface: '秘密語',
+    base: '秘密語',
+    reading: 'ひみつご',
+    pos: '名詞',
+    posKo: '명사'
+  }, ['비밀어'], 'openai', ownerId);
+  saveKanjiMeaning('秘', ['비밀'], 'openai', ownerId);
+
+  assert.equal(getCachedExamples('秘密語', otherId), null);
+  assert.deepEqual(getCachedWordMeanings({
+    surface: '秘密語',
+    base: '秘密語',
+    reading: 'ひみつご',
+    pos: '名詞',
+    posKo: '명사'
+  }, otherId), []);
+  assert.deepEqual(getCachedKanjiMeanings('秘', otherId), []);
+  assert.equal(getCachedExamples('秘密語', ownerId).provider, 'cache');
+  assert.deepEqual(getCachedWordMeanings({
+    surface: '秘密語',
+    base: '秘密語',
+    reading: 'ひみつご',
+    pos: '名詞',
+    posKo: '명사'
+  }, ownerId), ['비밀어']);
+  assert.deepEqual(getCachedKanjiMeanings('秘', ownerId), ['비밀']);
 });
 
 test('concurrent example generation shares one in-flight result', async () => {

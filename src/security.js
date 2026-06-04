@@ -11,13 +11,23 @@ const SCRYPT_PARAMS = {
   maxmem: 64 * 1024 * 1024
 };
 const KEY_LENGTH = 64;
+const SCRYPT_LIMITS = {
+  minN: 16384,
+  maxN: 131072,
+  maxR: 16,
+  maxP: 4,
+  minKeyLength: 32,
+  maxKeyLength: 128,
+  maxSaltLength: 64,
+  maxEncodedHashLength: 256
+};
 
 function randomToken(bytes = 32) {
   return crypto.randomBytes(bytes).toString('base64url');
 }
 
 function sha256(value) {
-  return crypto.createHash('sha256').update(`${config.sessionSecret}:${value}`).digest('hex');
+  return crypto.createHmac('sha256', config.sessionSecret).update(String(value)).digest('hex');
 }
 
 async function hashPassword(password) {
@@ -40,18 +50,56 @@ async function verifyPassword(password, storedHash) {
   }
 
   const [, n, r, p, keyLength, salt, expectedHash] = parts;
-  const derived = await scrypt(password, salt, Number(keyLength), {
-    N: Number(n),
-    r: Number(r),
-    p: Number(p),
-    maxmem: 64 * 1024 * 1024
-  });
+  const params = parseStoredScryptParams({ n, r, p, keyLength, salt, expectedHash });
+  if (!params) {
+    return false;
+  }
+
+  let derived;
+  try {
+    derived = await scrypt(password, salt, params.keyLength, {
+      N: params.N,
+      r: params.r,
+      p: params.p,
+      maxmem: 64 * 1024 * 1024
+    });
+  } catch (error) {
+    return false;
+  }
 
   const expected = Buffer.from(expectedHash, 'base64url');
   if (expected.length !== derived.length) {
     return false;
   }
   return crypto.timingSafeEqual(expected, derived);
+}
+
+function parseStoredScryptParams({ n, r, p, keyLength, salt, expectedHash }) {
+  const parsed = {
+    N: Number(n),
+    r: Number(r),
+    p: Number(p),
+    keyLength: Number(keyLength)
+  };
+  if (!Object.values(parsed).every(Number.isSafeInteger)) {
+    return null;
+  }
+  if (!Number.isSafeInteger(parsed.N) || parsed.N < SCRYPT_LIMITS.minN || parsed.N > SCRYPT_LIMITS.maxN) {
+    return null;
+  }
+  if ((parsed.N & (parsed.N - 1)) !== 0) {
+    return null;
+  }
+  if (parsed.r < 1 || parsed.r > SCRYPT_LIMITS.maxR || parsed.p < 1 || parsed.p > SCRYPT_LIMITS.maxP) {
+    return null;
+  }
+  if (parsed.keyLength < SCRYPT_LIMITS.minKeyLength || parsed.keyLength > SCRYPT_LIMITS.maxKeyLength) {
+    return null;
+  }
+  if (!salt || salt.length > SCRYPT_LIMITS.maxSaltLength || !expectedHash || expectedHash.length > SCRYPT_LIMITS.maxEncodedHashLength) {
+    return null;
+  }
+  return parsed;
 }
 
 function safeEqual(a, b) {

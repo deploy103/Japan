@@ -4,13 +4,33 @@ const { DatabaseSync } = require('node:sqlite');
 const config = require('./config');
 
 fs.mkdirSync(path.dirname(config.databasePath), { recursive: true });
+try {
+  fs.chmodSync(path.dirname(config.databasePath), 0o700);
+} catch (error) {
+  // Some mounted filesystems do not support POSIX permissions.
+}
 
 const db = new DatabaseSync(config.databasePath);
+
+function lockDownDatabaseFiles() {
+  for (const filePath of [config.databasePath, `${config.databasePath}-wal`, `${config.databasePath}-shm`]) {
+    if (!fs.existsSync(filePath)) {
+      continue;
+    }
+    try {
+      fs.chmodSync(filePath, 0o600);
+    } catch (error) {
+      // Some mounted filesystems do not support POSIX permissions.
+    }
+  }
+}
 
 // SQLite 단일 파일로 사용자, 세션, 학습 기록을 관리한다. 모든 사용자 데이터는 user_id로 묶어 삭제/조회 범위를 제한한다.
 db.exec(`
   PRAGMA journal_mode = WAL;
   PRAGMA foreign_keys = ON;
+  PRAGMA busy_timeout = 5000;
+  PRAGMA trusted_schema = OFF;
 
   CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -65,7 +85,8 @@ db.exec(`
 
   CREATE TABLE IF NOT EXISTS analysis_cache (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    source_key TEXT NOT NULL UNIQUE,
+    user_id INTEGER NOT NULL DEFAULT 0,
+    source_key TEXT NOT NULL,
     source_text TEXT NOT NULL,
     result_json TEXT NOT NULL,
     version TEXT NOT NULL,
@@ -73,13 +94,15 @@ db.exec(`
     hit_count INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    last_used_at TEXT
+    last_used_at TEXT,
+    UNIQUE(user_id, source_key, version)
   );
 
-  CREATE INDEX IF NOT EXISTS idx_analysis_cache_updated ON analysis_cache(updated_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_analysis_cache_updated ON analysis_cache(user_id, updated_at DESC);
 
   CREATE TABLE IF NOT EXISTS translation_cache (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL DEFAULT 0,
     direction TEXT NOT NULL CHECK (direction IN ('ja-ko', 'ko-ja')),
     source_text TEXT NOT NULL,
     translation_text TEXT NOT NULL,
@@ -88,24 +111,26 @@ db.exec(`
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     last_used_at TEXT,
-    UNIQUE(direction, source_text)
+    UNIQUE(user_id, direction, source_text)
   );
 
-  CREATE INDEX IF NOT EXISTS idx_translation_cache_updated ON translation_cache(updated_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_translation_cache_updated ON translation_cache(user_id, updated_at DESC);
 
   CREATE TABLE IF NOT EXISTS example_cache (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    term_key TEXT NOT NULL UNIQUE,
+    user_id INTEGER NOT NULL DEFAULT 0,
+    term_key TEXT NOT NULL,
     term TEXT NOT NULL,
     examples_json TEXT NOT NULL,
     provider TEXT NOT NULL,
     hit_count INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    last_used_at TEXT
+    last_used_at TEXT,
+    UNIQUE(user_id, term_key)
   );
 
-  CREATE INDEX IF NOT EXISTS idx_example_cache_updated ON example_cache(updated_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_example_cache_updated ON example_cache(user_id, updated_at DESC);
 
   CREATE TABLE IF NOT EXISTS ai_usage_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -122,8 +147,9 @@ db.exec(`
 
   CREATE TABLE IF NOT EXISTS meaning_cache (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL DEFAULT 0,
     item_type TEXT NOT NULL CHECK (item_type IN ('word', 'kanji')),
-    cache_key TEXT NOT NULL UNIQUE,
+    cache_key TEXT NOT NULL,
     term TEXT NOT NULL,
     reading TEXT,
     pos TEXT,
@@ -132,10 +158,11 @@ db.exec(`
     hit_count INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    last_used_at TEXT
+    last_used_at TEXT,
+    UNIQUE(user_id, cache_key)
   );
 
-  CREATE INDEX IF NOT EXISTS idx_meaning_cache_type_term ON meaning_cache(item_type, term);
+  CREATE INDEX IF NOT EXISTS idx_meaning_cache_type_term ON meaning_cache(user_id, item_type, term);
 
   CREATE TABLE IF NOT EXISTS vocabulary (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -188,180 +215,107 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_wrong_notes_user_created ON wrong_notes(user_id, created_at DESC);
 `);
 
-function normalizeCacheText(value) {
-  return String(value || '').trim();
+function tableDefinition(tableName) {
+  return db.prepare(`
+    SELECT sql
+    FROM sqlite_master
+    WHERE type = 'table' AND name = ?
+  `).get(tableName)?.sql || '';
 }
 
-function normalizeCachePos(value) {
-  return normalizeCacheText(value).toLowerCase();
-}
+function ensureUserScopedLearningCaches() {
+  const analysisSql = tableDefinition('analysis_cache');
+  const translationSql = tableDefinition('translation_cache');
+  const exampleSql = tableDefinition('example_cache');
+  const meaningSql = tableDefinition('meaning_cache');
 
-function cleanCachedMeanings(value, limit = 4) {
-  const raw = Array.isArray(value)
-    ? value
-    : String(value || '').split(/[,;/、\n]/);
-  const meanings = raw
-    .map((item) => normalizeCacheText(item).replace(/[.。]+$/g, ''))
-    .filter((item) => item && item !== '뜻 보강 필요');
-  return Array.from(new Set(meanings)).slice(0, limit);
-}
-
-function insertMeaningCache({ itemType, cacheKey, term, reading = '', pos = '', meanings, source, timestamp }) {
-  const cleaned = cleanCachedMeanings(meanings);
-  const normalizedTerm = normalizeCacheText(term);
-  const normalizedKey = normalizeCacheText(cacheKey);
-  if (!normalizedKey || !normalizedTerm || !cleaned.length) {
-    return;
+  if (!analysisSql.includes('UNIQUE(user_id, source_key, version)')) {
+    db.exec(`
+      DROP TABLE IF EXISTS analysis_cache;
+      CREATE TABLE analysis_cache (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL DEFAULT 0,
+        source_key TEXT NOT NULL,
+        source_text TEXT NOT NULL,
+        result_json TEXT NOT NULL,
+        version TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        hit_count INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        last_used_at TEXT,
+        UNIQUE(user_id, source_key, version)
+      );
+      CREATE INDEX IF NOT EXISTS idx_analysis_cache_updated ON analysis_cache(user_id, updated_at DESC);
+    `);
   }
 
-  db.prepare(`
-    INSERT OR IGNORE INTO meaning_cache (item_type, cache_key, term, reading, pos, meanings_json, source, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    itemType,
-    normalizedKey,
-    normalizedTerm,
-    normalizeCacheText(reading),
-    normalizeCachePos(pos),
-    JSON.stringify(cleaned),
-    source,
-    timestamp,
-    timestamp
-  );
-}
+  if (!translationSql.includes('UNIQUE(user_id, direction, source_text)')) {
+    db.exec(`
+      DROP TABLE IF EXISTS translation_cache;
+      CREATE TABLE translation_cache (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL DEFAULT 0,
+        direction TEXT NOT NULL CHECK (direction IN ('ja-ko', 'ko-ja')),
+        source_text TEXT NOT NULL,
+        translation_text TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        hit_count INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        last_used_at TEXT,
+        UNIQUE(user_id, direction, source_text)
+      );
+      CREATE INDEX IF NOT EXISTS idx_translation_cache_updated ON translation_cache(user_id, updated_at DESC);
+    `);
+  }
 
-function insertWordMeaningCache({ surface, base, reading, pos, meanings, source, timestamp }) {
-  const normalizedReading = normalizeCacheText(reading);
-  const normalizedPos = normalizeCachePos(pos);
-  const terms = Array.from(new Set([
-    normalizeCacheText(surface),
-    normalizeCacheText(base)
-  ].filter(Boolean)));
+  if (!exampleSql.includes('UNIQUE(user_id, term_key)')) {
+    db.exec(`
+      DROP TABLE IF EXISTS example_cache;
+      CREATE TABLE example_cache (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL DEFAULT 0,
+        term_key TEXT NOT NULL,
+        term TEXT NOT NULL,
+        examples_json TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        hit_count INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        last_used_at TEXT,
+        UNIQUE(user_id, term_key)
+      );
+      CREATE INDEX IF NOT EXISTS idx_example_cache_updated ON example_cache(user_id, updated_at DESC);
+    `);
+  }
 
-  for (const term of terms) {
-    insertMeaningCache({
-      itemType: 'word',
-      cacheKey: `word:${term}:${normalizedReading}:${normalizedPos}`,
-      term,
-      reading: normalizedReading,
-      pos: normalizedPos,
-      meanings,
-      source,
-      timestamp
-    });
-    insertMeaningCache({
-      itemType: 'word',
-      cacheKey: `word:${term}::${normalizedPos}`,
-      term,
-      pos: normalizedPos,
-      meanings,
-      source,
-      timestamp
-    });
-    insertMeaningCache({
-      itemType: 'word',
-      cacheKey: `word:${term}::`,
-      term,
-      meanings,
-      source,
-      timestamp
-    });
+  if (!meaningSql.includes('UNIQUE(user_id, cache_key)')) {
+    db.exec(`
+      DROP TABLE IF EXISTS meaning_cache;
+      CREATE TABLE meaning_cache (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL DEFAULT 0,
+        item_type TEXT NOT NULL CHECK (item_type IN ('word', 'kanji')),
+        cache_key TEXT NOT NULL,
+        term TEXT NOT NULL,
+        reading TEXT,
+        pos TEXT,
+        meanings_json TEXT NOT NULL,
+        source TEXT NOT NULL,
+        hit_count INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        last_used_at TEXT,
+        UNIQUE(user_id, cache_key)
+      );
+      CREATE INDEX IF NOT EXISTS idx_meaning_cache_type_term ON meaning_cache(user_id, item_type, term);
+    `);
   }
 }
 
-db.exec(`
-  INSERT OR IGNORE INTO translation_cache (direction, source_text, translation_text, provider, created_at, updated_at)
-  SELECT
-    CASE
-      WHEN summary_json LIKE '%"direction":"ko-ja"%' THEN 'ko-ja'
-      ELSE 'ja-ko'
-    END,
-    source_text,
-    translation_text,
-    'history',
-    created_at,
-    created_at
-  FROM search_history
-  WHERE TRIM(source_text) <> ''
-    AND TRIM(COALESCE(translation_text, '')) <> ''
-  ORDER BY created_at DESC;
-`);
-
-const vocabularyCacheRows = db.prepare(`
-  SELECT term, reading, meaning, created_at, updated_at
-  FROM vocabulary
-  WHERE TRIM(term) <> ''
-    AND TRIM(COALESCE(meaning, '')) <> ''
-`).all();
-
-for (const row of vocabularyCacheRows) {
-  const term = String(row.term || '').trim();
-  const meaning = String(row.meaning || '').trim();
-  if (!term || !meaning) {
-    continue;
-  }
-  const timestamp = row.updated_at || row.created_at || new Date().toISOString();
-  insertWordMeaningCache({
-    surface: term,
-    base: term,
-    reading: row.reading,
-    pos: '',
-    meanings: [meaning],
-    source: 'vocabulary',
-    timestamp
-  });
-}
-
-const historySummaryRows = db.prepare(`
-  SELECT summary_json, created_at
-  FROM search_history
-  WHERE TRIM(COALESCE(summary_json, '')) <> ''
-`).all();
-
-for (const row of historySummaryRows) {
-  let summary;
-  try {
-    summary = JSON.parse(row.summary_json);
-  } catch (error) {
-    continue;
-  }
-
-  const timestamp = row.created_at || new Date().toISOString();
-  for (const word of summary.words || []) {
-    insertWordMeaningCache({
-      surface: word.surface,
-      base: word.base,
-      reading: word.reading,
-      pos: word.posKo || word.pos,
-      meanings: word.meaning,
-      source: 'history',
-      timestamp
-    });
-  }
-
-  for (const detail of summary.kanji || []) {
-    insertMeaningCache({
-      itemType: 'kanji',
-      cacheKey: `kanji:${normalizeCacheText(detail.char)}`,
-      term: detail.char,
-      meanings: detail.meaningsKo || detail.meanings,
-      source: 'history',
-      timestamp
-    });
-
-    for (const example of detail.examples || []) {
-      insertWordMeaningCache({
-        surface: example.written,
-        base: example.written,
-        reading: example.pronounced,
-        pos: '명사',
-        meanings: example.meanings,
-        source: 'history',
-        timestamp
-      });
-    }
-  }
-}
+ensureUserScopedLearningCaches();
+lockDownDatabaseFiles();
 
 function nowIso() {
   return new Date().toISOString();
