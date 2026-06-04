@@ -6,6 +6,7 @@ node_modules/
 .env.*
 !.env.example
 server.txt
+admin.txt
 *.pem
 *.key
 *.p12
