@@ -1,10 +1,7 @@
-# Dependencies
-node_modules/
-
-# Environment and secrets
+.git
+.gitignore
 .env
 .env.*
-!.env.example
 .npmrc
 .pypirc
 .netrc
@@ -22,7 +19,7 @@ application_default_credentials.json
 .docker/config.json
 kubeconfig
 *.kubeconfig
-.kube/
+.kube
 terraform.tfstate*
 *.tfvars
 .vault_pass
@@ -40,19 +37,6 @@ vault-password*
 *.cer
 id_rsa
 id_ed25519
-
-# Local/private project notes
-*일지*.md
-*계획*.md
-[d]eploy/
-
-# Runtime data
-data/*.db
-data/*.db-*
-data/*.sqlite
-data/*.sqlite-*
-data/*.sqlite3
-data/*.sqlite3-*
 *.db
 *.db-*
 *.sqlite
@@ -65,37 +49,39 @@ data/*.sqlite3-*
 *.dump
 *.bak
 *.backup
-backups/
-
-# Logs
-logs/
 *.log
+node_modules
+data
+backups
+logs
+coverage
+dist
+build
+.nyc_output
+__pycache__
+*.py[cod]
+.pytest_cache
+.mypy_cache
+.ruff_cache
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
-
-# Test/build output
-coverage/
-dist/
-build/
-.nyc_output/
-__pycache__/
-*.py[cod]
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-
-# OS/editor
+*일지*.md
+*계획*.md
+[d]eploy
 .DS_Store
 Thumbs.db
-.idea/
-.vscode/
-
-# Archive backups
+.idea
+.vscode
 *.zip
 *.tar
 *.tar.gz
 *.tgz
 *.7z
 *.rar
+Dockerfile*
+compose*.yml
+docker-compose*.yml
+README.md
+tests

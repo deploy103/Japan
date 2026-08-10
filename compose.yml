@@ -1,0 +1,29 @@
+services:
+  japan:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: true
+    environment:
+      NODE_ENV: production
+      PORT: "8002"
+      DATABASE_PATH: /app/data/app.sqlite
+      FIRST_USER_ADMIN: "false"
+    expose:
+      - "8002"
+    volumes:
+      - japan-data:/app/data
+      - japan-backups:/app/backups
+    networks:
+      - mvtp-web-net
+
+volumes:
+  japan-data:
+  japan-backups:
+
+networks:
+  mvtp-web-net:
+    external: true
